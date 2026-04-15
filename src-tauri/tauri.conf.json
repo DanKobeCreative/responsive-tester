@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.kobecreative.responsivetester",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "withGlobalTauri": false,
@@ -25,7 +28,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": "dmg",
+    "targets": ["app", "dmg"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -33,5 +37,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/DanKobeCreative/responsive-tester/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM3MzY3Nzk0MDZFMEQ1REMKUldUYzFlQUdsSGMyTjNLNEtHb1lBTWttaG5nOFlEWVpXTUVJdUIvUTJQQzZzQm1FM21RSFpxdmsK"
+    }
   }
 }

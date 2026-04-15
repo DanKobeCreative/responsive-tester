@@ -1,3 +1,6 @@
+import { check } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
+
 // Curated device matrix covering common real-world viewports.
 // Width/height are CSS pixels — what the page sees via window.innerWidth.
 const DEVICES = [
@@ -144,3 +147,45 @@ scaleInput.addEventListener('input', () => {
 
 buildSidebar();
 buildGrid();
+
+// ── Auto-updater ──────────────────────────────────────────
+// Checks GitHub Releases on launch. If a newer version is signed and
+// available, shows a small toast in the corner; the user clicks to
+// install + relaunch.
+async function checkForUpdate() {
+  try {
+    const update = await check();
+    if (!update) return;
+    showUpdateToast(update);
+  } catch (err) {
+    console.warn('Update check failed:', err);
+  }
+}
+
+function showUpdateToast(update) {
+  const toast = document.createElement('div');
+  toast.className = 'rt-update-toast';
+  toast.innerHTML = `
+    <div class="rt-update-toast__body">
+      <strong>Update available</strong>
+      <span>v${update.version} is ready to install.</span>
+    </div>
+    <button class="rt-update-toast__btn js-rt-update-install">Install &amp; restart</button>
+    <button class="rt-update-toast__close js-rt-update-close" aria-label="Dismiss">×</button>
+  `;
+  document.body.appendChild(toast);
+
+  toast.querySelector('.js-rt-update-install').addEventListener('click', async () => {
+    toast.querySelector('.rt-update-toast__body').innerHTML = '<strong>Installing…</strong>';
+    try {
+      await update.downloadAndInstall();
+      await relaunch();
+    } catch (err) {
+      toast.querySelector('.rt-update-toast__body').innerHTML = `<strong>Update failed</strong><span>${err}</span>`;
+    }
+  });
+
+  toast.querySelector('.js-rt-update-close').addEventListener('click', () => toast.remove());
+}
+
+checkForUpdate();
