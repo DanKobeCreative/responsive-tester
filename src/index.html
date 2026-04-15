@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Responsive Tester</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="/main.js" defer></script>
+  </head>
+  <body>
+    <div class="rt-app">
+      <div class="rt-toolbar">
+        <input
+          type="url"
+          class="rt-toolbar__url js-rt-url"
+          placeholder="https://your-client-site.staging.kobecreative.co.uk"
+          spellcheck="false"
+          autocomplete="off"
+        />
+        <button class="rt-toolbar__btn rt-toolbar__btn--primary js-rt-load">Load</button>
+        <button class="rt-toolbar__btn js-rt-refresh" title="Reload all frames">Refresh</button>
+        <div class="rt-toolbar__filter" role="tablist" aria-label="Device class filter">
+          <button class="rt-toolbar__chip is-active js-rt-filter" data-filter="all">All</button>
+          <button class="rt-toolbar__chip js-rt-filter" data-filter="mobile"><span class="rt-dot rt-dot--mobile"></span>Mobile</button>
+          <button class="rt-toolbar__chip js-rt-filter" data-filter="tablet"><span class="rt-dot rt-dot--tablet"></span>Tablet</button>
+          <button class="rt-toolbar__chip js-rt-filter" data-filter="desktop"><span class="rt-dot rt-dot--desktop"></span>Desktop</button>
+        </div>
+        <label class="rt-toolbar__scale">
+          <span>Scale</span>
+          <input type="range" min="20" max="100" step="5" value="40" class="rt-toolbar__scale-range js-rt-scale" />
+          <span class="rt-toolbar__scale-value js-rt-scale-value">40%</span>
+        </label>
+      </div>
+
+      <div class="rt-body">
+        <aside class="rt-sidebar js-rt-sidebar"></aside>
+        <div class="rt-grid js-rt-grid"></div>
+      </div>
+    </div>
+  </body>
+</html>
