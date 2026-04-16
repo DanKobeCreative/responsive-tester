@@ -8,12 +8,15 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:build:universal": "tauri build --target universal-apple-darwin"
+    "tauri:build:universal": "tauri build --target universal-apple-darwin",
+    "audit": "node audit/run.js"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.1",
     "@rolldown/binding-darwin-arm64": "^1.0.0-rc.16",
     "@rolldown/pluginutils": "^1.0.0-rc.16",
     "@tauri-apps/cli": "^2",
+    "playwright": "^1.59.1",
     "vite": "^8.0.8"
   },
   "dependencies": {
