@@ -15,6 +15,7 @@ npm run audit -- --url https://studio.staging.kobecreative.co.uk
 - `--viewports=all` — every device in `audit/lib/viewports.js`
 - `--viewports=galaxy-s24,iphone-16,full-hd` — explicit list
 - `--out <dir>` — custom output directory (defaults to `audit-runs/<timestamp>/`)
+- `--delay-ms=1000` — pause between viewports; useful when the target is behind aggressive rate-limiting (Hetzner fail2ban, Cloudflare, etc.)
 
 ## Output
 

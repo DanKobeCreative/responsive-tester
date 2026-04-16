@@ -1,6 +1,9 @@
 // Horizontal overflow — elements whose right edge crosses the viewport.
 // Only reports the *outermost* offending element in each chain so one hero
 // section bleeding 40px right doesn't produce 200 findings for its children.
+// Skips elements visually clipped by an ancestor with overflow:hidden/clip
+// (e.g. a GSAP scale transform inside a clipping container) — the user
+// never sees the overflow so it isn't a real issue.
 
 export default async function check(page) {
   return page.evaluate(() => {
@@ -9,12 +12,24 @@ export default async function check(page) {
     const offenders = new Set();
     const all = Array.from(document.body.querySelectorAll('*'));
 
+    const isClippedByAncestor = (el) => {
+      for (let p = el.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+        const s = getComputedStyle(p);
+        if (s.overflowX === 'hidden' || s.overflowX === 'clip' || s.overflow === 'hidden' || s.overflow === 'clip') {
+          const pr = p.getBoundingClientRect();
+          if (pr.right <= vw + TOLERANCE) return true;
+        }
+      }
+      return false;
+    };
+
     for (const el of all) {
       const rect = el.getBoundingClientRect();
       if (rect.width <= 10 || rect.height <= 4) continue;
       if (rect.right - vw <= TOLERANCE) continue;
       const style = getComputedStyle(el);
       if (style.position === 'fixed' || style.position === 'sticky') continue;
+      if (isClippedByAncestor(el)) continue;
       offenders.add(el);
     }
 
