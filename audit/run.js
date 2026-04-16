@@ -37,9 +37,23 @@ function parseArgs(argv) {
 }
 
 async function gotoStable(page, url) {
-  await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-  await page.evaluate(() => document.fonts?.ready).catch(() => {});
-  await page.waitForTimeout(500);
+  // Retry twice on transient network errors — staging servers behind
+  // rate-limiters (Hetzner fail2ban) sometimes drop mid-run connections.
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+      await page.evaluate(() => document.fonts?.ready).catch(() => {});
+      await page.waitForTimeout(500);
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (!/ERR_CONNECTION|ERR_NETWORK|ERR_TIMED_OUT|ERR_EMPTY_RESPONSE/.test(e.message)) throw e;
+      await page.waitForTimeout(2000 * (attempt + 1));
+    }
+  }
+  throw lastErr;
 }
 
 async function run() {
