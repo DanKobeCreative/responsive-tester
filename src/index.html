@@ -13,28 +13,175 @@
         <input
           type="url"
           class="rt-toolbar__url js-rt-url"
+          list="rt-recent"
           placeholder="https://your-client-site.staging.kobecreative.co.uk"
           spellcheck="false"
           autocomplete="off"
         />
+        <datalist id="rt-recent"></datalist>
         <button class="rt-toolbar__btn rt-toolbar__btn--primary js-rt-load">Load</button>
-        <button class="rt-toolbar__btn js-rt-refresh" title="Reload all frames">Refresh</button>
+        <button class="rt-toolbar__btn js-rt-refresh" title="Reload all frames (⌘R)">Refresh</button>
+        <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-bookmark" title="Bookmark (⌘D)" aria-label="Bookmark" data-icon="bookmark"></button>
         <div class="rt-toolbar__filter" role="tablist" aria-label="Device class filter">
-          <button class="rt-toolbar__chip is-active js-rt-filter" data-filter="all">All</button>
-          <button class="rt-toolbar__chip js-rt-filter" data-filter="mobile"><span class="rt-dot rt-dot--mobile"></span>Mobile</button>
-          <button class="rt-toolbar__chip js-rt-filter" data-filter="tablet"><span class="rt-dot rt-dot--tablet"></span>Tablet</button>
-          <button class="rt-toolbar__chip js-rt-filter" data-filter="desktop"><span class="rt-dot rt-dot--desktop"></span>Desktop</button>
+          <button class="rt-toolbar__chip is-active js-rt-filter" data-filter="all" title="⌘0">All</button>
+          <button class="rt-toolbar__chip js-rt-filter" data-filter="mobile" title="⌘1"><span class="rt-dot rt-dot--mobile"></span>Mobile</button>
+          <button class="rt-toolbar__chip js-rt-filter" data-filter="tablet" title="⌘2"><span class="rt-dot rt-dot--tablet"></span>Tablet</button>
+          <button class="rt-toolbar__chip js-rt-filter" data-filter="desktop" title="⌘3"><span class="rt-dot rt-dot--desktop"></span>Desktop</button>
         </div>
         <label class="rt-toolbar__scale">
           <span>Scale</span>
           <input type="range" min="20" max="100" step="5" value="40" class="rt-toolbar__scale-range js-rt-scale" />
           <span class="rt-toolbar__scale-value js-rt-scale-value">40%</span>
         </label>
+        <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-settings" title="Settings (⌘,)" aria-label="Settings" data-icon="settings"></button>
+        <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-hide-toolbars" title="Hide toolbars (⌘.)" aria-label="Hide toolbars" data-icon="chevron-up"></button>
+      </div>
+
+      <div class="rt-toolbar rt-toolbar--secondary">
+        <div class="rt-toolbar__group" role="group" aria-label="Layout">
+          <button class="rt-toolbar__icon-btn js-rt-layout is-active" data-layout="grid" title="Grid layout" aria-label="Grid" data-icon="layout-grid"></button>
+          <button class="rt-toolbar__icon-btn js-rt-layout" data-layout="row" title="Single row" aria-label="Row" data-icon="rows"></button>
+          <button class="rt-toolbar__icon-btn js-rt-layout" data-layout="column" title="Single column" aria-label="Column" data-icon="columns"></button>
+        </div>
+
+        <button class="rt-toolbar__btn js-rt-grid-overlay" title="Toggle 8/12-column grid overlay">
+          <span data-icon="grid-3x3"></span><span class="rt-toolbar__btn-label">Grid</span>
+        </button>
+        <button class="rt-toolbar__btn js-rt-darkpair" title="Pair each device with simulated dark mode">
+          <span data-icon="moon"></span><span class="rt-toolbar__btn-label">Dark pair</span>
+        </button>
+        <select class="rt-toolbar__select js-rt-cb" title="Color-blindness simulation"></select>
+
+        <span class="rt-toolbar__sep" aria-hidden="true"></span>
+
+        <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-sync" title="Sync scroll across frames" aria-label="Sync scroll" data-icon="arrow-up-down"></button>
+        <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-screenshot-all" title="Capture all visible frames" aria-label="Screenshot all" data-icon="camera"></button>
+        <div class="rt-toolbar__group rt-toolbar__video" role="group" aria-label="Video recording">
+          <select class="rt-toolbar__select rt-toolbar__select--sm js-rt-video-duration" title="Video duration">
+            <option value="5">5s</option>
+            <option value="15" selected>15s</option>
+            <option value="30">30s</option>
+            <option value="60">60s</option>
+          </select>
+          <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-video" title="Record video of window" aria-label="Record" data-icon="video"></button>
+        </div>
+
+        <span class="rt-toolbar__sep" aria-hidden="true"></span>
+
+        <button class="rt-toolbar__btn js-rt-panel-open" data-tab="inspector" title="Meta / SEO inspector">Meta</button>
+        <button class="rt-toolbar__btn js-rt-panel-open" data-tab="social" title="Social media previews">Social</button>
+        <button class="rt-toolbar__btn js-rt-panel-open" data-tab="links" title="Check all page links">Links</button>
+        <button class="rt-toolbar__btn js-rt-panel-open" data-tab="breakpoints" title="Detect CSS breakpoints">Breakpoints</button>
       </div>
 
       <div class="rt-body">
         <aside class="rt-sidebar js-rt-sidebar"></aside>
         <div class="rt-grid js-rt-grid"></div>
+      </div>
+    </div>
+
+    <!-- Floating restore buttons (only visible when their target is hidden) -->
+    <button class="rt-toolbar-reveal js-rt-reveal-toolbars" title="Show toolbars (⌘.)" aria-label="Show toolbars" data-icon="chevron-down" data-icon-size="16"></button>
+    <button class="rt-sidebar-reveal js-rt-reveal-sidebar" title="Show sidebar (⌘B)" aria-label="Show sidebar" data-icon="panel-left-open" data-icon-size="16"></button>
+
+    <!-- Inspect panel -->
+    <div class="rt-panel js-rt-inspect-panel" hidden>
+      <div class="rt-panel__header">
+        <div class="rt-panel__tabs">
+          <button class="rt-panel__tab is-active js-rt-inspect-tab" data-tab="inspector">Meta</button>
+          <button class="rt-panel__tab js-rt-inspect-tab" data-tab="social">Social</button>
+          <button class="rt-panel__tab js-rt-inspect-tab" data-tab="links">Links</button>
+          <button class="rt-panel__tab js-rt-inspect-tab" data-tab="breakpoints">Breakpoints</button>
+        </div>
+        <button class="rt-panel__close js-rt-inspect-close" aria-label="Close" data-icon="x" data-icon-size="16"></button>
+      </div>
+      <div class="rt-panel__body js-rt-inspect-body"></div>
+    </div>
+
+    <!-- Settings panel -->
+    <div class="rt-settings js-rt-settings-panel" hidden>
+      <div class="rt-settings__header">
+        <strong>Settings</strong>
+        <button class="rt-settings__close js-rt-settings-close" aria-label="Close" data-icon="x" data-icon-size="16"></button>
+      </div>
+
+      <div class="rt-settings__body">
+        <div class="rt-settings__section">
+          <h4>Workspaces</h4>
+          <p>Save the current devices / scale / layout / overlays as a named preset.</p>
+          <div class="rt-settings__row">
+            <input type="text" class="js-rt-workspace-name" placeholder="e.g. Kobe audit">
+            <button class="rt-toolbar__btn js-rt-workspace-save">Save current</button>
+          </div>
+          <ul class="rt-settings__list js-rt-workspaces"></ul>
+        </div>
+
+        <div class="rt-settings__section">
+          <h4>Recent URLs</h4>
+          <p>Cleared list still lets you type any URL; this only empties the dropdown.</p>
+          <button class="rt-toolbar__btn js-rt-clear-recent">Clear recent URLs</button>
+        </div>
+
+        <div class="rt-settings__section">
+          <h4>Contrast checker</h4>
+          <p>WCAG ratio calculator. Enter two hex colors.</p>
+          <div class="rt-settings__row rt-contrast__row">
+            <label>Foreground <input type="color" class="js-rt-contrast-fg" value="#0f172a"></label>
+            <label>Background <input type="color" class="js-rt-contrast-bg" value="#ffffff"></label>
+          </div>
+          <div class="rt-contrast__preview js-rt-contrast-preview">The quick brown fox jumps.</div>
+          <div class="rt-contrast__out js-rt-contrast-out"></div>
+        </div>
+
+        <div class="rt-settings__section">
+          <h4>Basic auth</h4>
+          <p>Saved credentials are embedded in the URL per host. Stored locally in this app only.</p>
+          <div class="rt-settings__row">
+            <input type="text" class="js-rt-auth-host" placeholder="host, e.g. staging.example.com">
+            <input type="text" class="js-rt-auth-user" placeholder="username">
+            <input type="password" class="js-rt-auth-pass" placeholder="password">
+            <button class="rt-toolbar__btn js-rt-auth-save">Save</button>
+          </div>
+          <ul class="rt-settings__list js-rt-auth-list"></ul>
+        </div>
+
+        <div class="rt-settings__section">
+          <h4>Add custom device</h4>
+          <div class="rt-settings__row">
+            <input type="text" class="js-rt-custom-name" placeholder="Name">
+            <input type="number" class="js-rt-custom-w" placeholder="Width" min="100" max="4000">
+            <input type="number" class="js-rt-custom-h" placeholder="Height" min="100" max="4000">
+            <select class="js-rt-custom-type">
+              <option value="mobile">Mobile</option>
+              <option value="tablet">Tablet</option>
+              <option value="desktop">Desktop</option>
+            </select>
+            <button class="rt-toolbar__btn js-rt-custom-add">Add</button>
+          </div>
+        </div>
+
+        <div class="rt-settings__section">
+          <h4>Keyboard shortcuts</h4>
+          <dl class="rt-settings__shortcuts">
+            <dt>⌘L</dt><dd>Focus URL</dd>
+            <dt>⌘R</dt><dd>Reload all frames</dd>
+            <dt>⌘D</dt><dd>Bookmark current URL</dd>
+            <dt>⌘0 / ⌘1 / ⌘2 / ⌘3</dt><dd>Filter: all / mobile / tablet / desktop</dd>
+            <dt>⌘+ / ⌘−</dt><dd>Zoom in / out (scale)</dd>
+            <dt>⌘[ / ⌘]</dt><dd>Ref-image opacity down / up</dd>
+            <dt>⌘B</dt><dd>Toggle sidebar</dd>
+            <dt>⌘.</dt><dd>Toggle toolbars</dd>
+            <dt>⌘,</dt><dd>Open settings</dd>
+            <dt>Esc</dt><dd>Close panels or exit focused device</dd>
+          </dl>
+        </div>
+
+        <div class="rt-settings__section">
+          <h4>Sync scroll</h4>
+          <p><strong>Browsers block cross-origin scroll access.</strong> To make sync-scroll work, add this one-liner to the <code>&lt;head&gt;</code> of your staging site (drop it into the Kobe starter theme once and it works on every client). The app sends and receives scroll events via <code>postMessage</code>.</p>
+          <pre class="rt-settings__code">&lt;script&gt;window.addEventListener('scroll',()=&gt;parent.postMessage({rt:'scroll',y:scrollY,x:scrollX},'*'),{passive:true});window.addEventListener('message',e=&gt;{if(e.data?.rt==='scroll')window.scrollTo(e.data.x,e.data.y)});&lt;/script&gt;</pre>
+          <button class="rt-toolbar__btn js-rt-copy-sync">Copy snippet</button>
+        </div>
       </div>
     </div>
   </body>

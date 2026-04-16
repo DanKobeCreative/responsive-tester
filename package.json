@@ -7,9 +7,12 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:build:universal": "tauri build --target universal-apple-darwin"
   },
   "devDependencies": {
+    "@rolldown/binding-darwin-arm64": "^1.0.0-rc.16",
+    "@rolldown/pluginutils": "^1.0.0-rc.16",
     "@tauri-apps/cli": "^2",
     "vite": "^8.0.8"
   },
