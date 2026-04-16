@@ -547,6 +547,13 @@ body {
   flex-direction: column;
   gap: 6px;
   align-self: flex-start;
+  /* Offscreen devices skip layout + paint entirely via content-visibility.
+     contain-intrinsic-size is a hint so the browser reserves vertical
+     space without having to actually render — prevents scroll jumping.
+     Huge win on 20-device grids at low scale where most devices live
+     offscreen during normal interaction. */
+  content-visibility: auto;
+  contain-intrinsic-size: 400px 700px;
 }
 
 .rt-device.is-hidden { display: none; }
