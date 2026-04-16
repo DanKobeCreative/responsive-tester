@@ -92,7 +92,19 @@ function saveState() {
 const state = loadState();
 // Persist immediately if loadState did a migration, so the reset sticks.
 saveState();
-const allDevices = () => [...DEFAULT_DEVICES, ...state.customDevices];
+
+// Memoised allDevices — the result is a fresh array every call in older
+// code (hot in applyScale/applyVisibility). Cache it and invalidate when
+// customDevices changes. invalidateDevices() is called anywhere state
+// mutations affect the device list (addCustomDevice, deleteCustomDevice,
+// workspace load).
+let _allDevicesCache = null;
+function allDevices() {
+  if (_allDevicesCache) return _allDevicesCache;
+  _allDevicesCache = [...DEFAULT_DEVICES, ...state.customDevices];
+  return _allDevicesCache;
+}
+function invalidateDevices() { _allDevicesCache = null; }
 
 // ── DOM refs ────────────────────────────────────────────────────────
 const grid = document.querySelector('.js-rt-grid');
@@ -226,6 +238,7 @@ function buildSidebar() {
       delete state.rotated[id];
       delete state.dims[id];
       delete state.refImages[id];
+      invalidateDevices();
       saveState();
       buildAll();
     });
@@ -698,6 +711,7 @@ function addCustomDevice() {
   const id = `custom-${Date.now()}`;
   state.customDevices.push({ id, name, w, h, type });
   state.enabled[id] = true;
+  invalidateDevices();
   saveState();
   ['name', 'w', 'h'].forEach((k) => { document.querySelector(`.js-rt-custom-${k}`).value = ''; });
   buildAll();
