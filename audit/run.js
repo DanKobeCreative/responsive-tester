@@ -17,17 +17,23 @@ import touchTargetsCheck from './checks/touch-targets.js';
 import clippingCheck from './checks/clipping.js';
 import a11yCheck from './checks/a11y.js';
 import consoleCheck from './checks/console.js';
+import aestheticCheck from './checks/aesthetic.js';
 import metaCheck from './checks/meta.js';
 import copyCheck from './checks/copy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VIEWPORT_CHECKS = [overflowCheck, touchTargetsCheck, clippingCheck, a11yCheck, consoleCheck];
+const VIEWPORT_POST_SHOT_CHECKS = [aestheticCheck];
 const PAGE_CHECKS = [metaCheck, copyCheck];
 
 function parseArgs(argv) {
-  const args = { url: null, viewports: 'default', out: null, 'delay-ms': '0' };
+  const args = {
+    url: null, viewports: 'default', out: null, 'delay-ms': '0',
+    vision: 'false', 'vision-model': 'llama3.2-vision', 'vision-host': 'http://localhost:11434',
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    if (a === '--vision') { args.vision = 'true'; continue; }
     const [key, val] = a.startsWith('--') ? a.slice(2).split('=') : [null, null];
     if (!key) continue;
     if (val !== undefined) args[key] = val;
@@ -113,8 +119,15 @@ async function run() {
 
       try {
         await gotoStable(page, args.url);
-        const ctx = { consoleErrors, networkErrors };
+        const shotPath = path.join(shotsDir, `${v.id}.png`);
+        const ctx = {
+          consoleErrors,
+          networkErrors,
+          vision: args.vision === 'true' ? { enabled: true, host: args['vision-host'], model: args['vision-model'], screenshotPath: shotPath } : null,
+        };
         const findings = [];
+
+        // Deterministic checks that only need the DOM
         for (const check of VIEWPORT_CHECKS) {
           try {
             const results = await check(page, v, ctx);
@@ -124,7 +137,19 @@ async function run() {
           }
         }
 
-        await page.screenshot({ path: path.join(shotsDir, `${v.id}.png`), fullPage: true });
+        // Screenshot — required before checks that need the image on disk
+        await page.screenshot({ path: shotPath, fullPage: true });
+
+        // Checks that need the saved screenshot (vision / pixel-diff)
+        for (const check of VIEWPORT_POST_SHOT_CHECKS) {
+          try {
+            const results = await check(page, v, ctx);
+            findings.push(...results.map((f) => ({ ...f, viewport: v.id })));
+          } catch (e) {
+            findings.push({ check: check.name, severity: 'error', message: `Check crashed: ${e.message}`, viewport: v.id });
+          }
+        }
+
         viewportFindings[v.id] = findings;
       } catch (e) {
         viewportFindings[v.id] = [{ check: 'runner', severity: 'error', message: `Navigation failed: ${e.message}`, viewport: v.id }];
