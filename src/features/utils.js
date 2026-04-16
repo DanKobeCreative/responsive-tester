@@ -55,12 +55,23 @@ export class LoadQueue {
     this.concurrency = concurrency;
     this.running = 0;
     this.queue = [];
+    this.completed = 0;
+    this.total = 0;
+    this.onProgress = null;   // ({ completed, total, running, pending }) => void
   }
-  clear() { this.queue.length = 0; }
+  clear() {
+    this.queue.length = 0;
+    this.completed = 0;
+    this.total = 0;
+    this.emit();
+  }
   add(task) {
+    this.total++;
+    this.emit();
     return new Promise((resolve) => {
       this.queue.push(async () => {
         try { resolve(await task()); } catch (e) { resolve(); }
+        finally { this.completed++; this.emit(); }
       });
       this.drain();
     });
@@ -74,5 +85,14 @@ export class LoadQueue {
         this.drain();
       });
     }
+  }
+  emit() {
+    if (!this.onProgress) return;
+    this.onProgress({
+      completed: this.completed,
+      total: this.total,
+      running: this.running,
+      pending: this.queue.length,
+    });
   }
 }

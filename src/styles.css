@@ -2,6 +2,44 @@
 
 [hidden] { display: none !important; }
 
+/* ── Load progress toast ─────────────────────────────── */
+.rt-load-progress {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 501;
+  min-width: 220px;
+  padding: 10px 14px;
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-border);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--rt-text);
+}
+.rt-load-progress__bar {
+  width: 100%;
+  height: 3px;
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.rt-load-progress__fill {
+  height: 100%;
+  background: var(--rt-accent);
+  width: 0;
+  transition: width 0.25s ease;
+}
+.rt-load-progress__label {
+  color: var(--rt-text-dim);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── SVG icon sizing ────────────────────────────────── */
 .rt-icon {
   display: inline-block;
@@ -10,6 +48,14 @@
 }
 
 button .rt-icon { pointer-events: none; }
+
+/* Keyboard-only focus ring. Applies everywhere so every interactive
+   element reads as focusable without relying on per-component styles. */
+:focus-visible {
+  outline: 2px solid var(--rt-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
 
 html, body { margin: 0; padding: 0; height: 100%; }
 
@@ -190,6 +236,14 @@ body {
   background: var(--rt-accent);
   border-color: var(--rt-accent);
   color: #fff;
+}
+
+/* Sync-scroll button pulses briefly every time the app broadcasts a
+   scroll — visual confirmation that sync is firing without needing
+   to open DevTools. Pulse is additive to .is-active. */
+.rt-toolbar__btn.is-pulsing {
+  box-shadow: 0 0 0 4px rgba(129, 140, 248, 0.35);
+  transition: box-shadow 0.25s ease;
 }
 
 @media (hover: hover) {
@@ -699,6 +753,7 @@ body {
   width: 460px;
   max-width: calc(100vw - 48px);
   background: var(--rt-surface);
+  color: var(--rt-text);
   border: 1px solid var(--rt-border);
   border-radius: 12px;
   box-shadow: 0 30px 80px rgba(15, 23, 42, 0.25);

@@ -341,22 +341,27 @@ function applyScale() {
 // grid of 20 devices heavy. When a device goes hidden we unload its iframe
 // to about:blank; when it comes back into view we reload it with the current
 // URL. This trades network requests for much lower steady-state load.
+// Uses the same Map-lookup + cached refs approach as applyScale to avoid
+// O(devices²) on filter/toggle changes.
 function applyVisibility() {
-  grid.querySelectorAll('.rt-device').forEach((wrap) => {
-    const d = allDevices().find((x) => x.id === wrap.dataset.srcId);
-    if (!d) return;
+  const deviceMap = new Map(allDevices().map((d) => [d.id, d]));
+  const wraps = grid.querySelectorAll('.rt-device');
+  for (let i = 0; i < wraps.length; i++) {
+    const wrap = wraps[i];
+    const d = deviceMap.get(wrap.dataset.srcId);
+    if (!d) continue;
     const matchesFilter = state.filter === 'all' || state.filter === d.type;
     const show = state.enabled[d.id] !== false && matchesFilter;
     const wasHidden = wrap.classList.contains('is-hidden');
     wrap.classList.toggle('is-hidden', !show);
-    const iframe = wrap.querySelector('.rt-device__frame');
+    const { iframe } = getDeviceRefs(wrap);
     if (!show) {
       if (iframe.src && iframe.src !== 'about:blank') iframe.src = 'about:blank';
     } else if (wasHidden && state.url) {
       const isDark = wrap.dataset.variant === 'dark';
       loadQueue.add(() => loadFrame(iframe, wrap, state.url, isDark));
     }
-  });
+  }
 }
 
 function applyRefImages() {
@@ -468,6 +473,29 @@ function attachResize(wrap, handle) {
 // Returns a promise that resolves when the iframe fires load/error or the
 // timeout elapses — used by LoadQueue to stagger concurrent loads.
 const loadQueue = new LoadQueue(4);
+
+// Wire the queue to a top-left progress toast so the user sees how many
+// iframes are still loading when they hit Load on a 15+ device workspace.
+const loadProgress = document.querySelector('.js-rt-load-progress');
+const loadProgressFill = document.querySelector('.js-rt-load-progress-fill');
+const loadProgressLabel = document.querySelector('.js-rt-load-progress-label');
+let loadProgressHideTimer = null;
+loadQueue.onProgress = ({ completed, total }) => {
+  if (!loadProgress || !loadProgressFill || !loadProgressLabel) return;
+  if (total === 0) { loadProgress.hidden = true; return; }
+  loadProgress.hidden = false;
+  const pct = Math.round((completed / total) * 100);
+  loadProgressFill.style.width = `${pct}%`;
+  loadProgressLabel.textContent = `Loading ${completed}/${total} frames`;
+  if (completed >= total) {
+    if (loadProgressHideTimer) clearTimeout(loadProgressHideTimer);
+    loadProgressHideTimer = setTimeout(() => {
+      loadProgress.hidden = true;
+      loadQueue.total = 0;
+      loadQueue.completed = 0;
+    }, 800);
+  }
+};
 
 // Inject the sync-scroll bridge into an iframe's document. Only works on
 // same-origin iframes — we check origins up-front and bail silently on
@@ -943,11 +971,17 @@ settingsBtn.addEventListener('click', openSettings);
 settingsClose.addEventListener('click', closeSettings);
 inspectClose.addEventListener('click', closeInspect);
 urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadUrl(); });
+urlInput.addEventListener('blur', () => {
+  // Normalise on blur so the user immediately sees https:// prepended if
+  // they pasted a bare hostname like monvrchs.staging.kobecreative.co.uk.
+  const normalised = normaliseUrl(urlInput.value);
+  if (normalised && normalised !== urlInput.value) urlInput.value = normalised;
+});
 
 document.querySelector('.js-rt-auth-save').addEventListener('click', saveAuth);
 document.querySelector('.js-rt-custom-add').addEventListener('click', addCustomDevice);
 
-const SYNC_SNIPPET = `<script>window.addEventListener('scroll',()=>parent.postMessage({rt:'scroll',y:scrollY,x:scrollX},'*'),{passive:true});window.addEventListener('message',e=>{if(e.data?.rt==='scroll')window.scrollTo(e.data.x,e.data.y)});</script>`;
+const SYNC_SNIPPET = `<script>(function(){if(window.parent===window)return;var ig=false;window.addEventListener('scroll',function(){if(ig){ig=false;return}parent.postMessage({rt:'scroll',y:scrollY,x:scrollX},'*')},{passive:true});window.addEventListener('message',function(e){if(e.data&&e.data.rt==='scroll'){ig=true;window.scrollTo(e.data.x,e.data.y)}})})();</script>`;
 
 if (syncBtn) {
   syncBtn.addEventListener('click', () => {
@@ -1034,6 +1068,11 @@ window.addEventListener('keydown', (e) => {
   if (meta && e.key === '-') { e.preventDefault(); adjustScale(-5); return; }
   if (meta && e.key === '.') { e.preventDefault(); toggleToolbars(); return; }
   if (meta && e.key === 'b') { e.preventDefault(); toggleSidebar(); return; }
+  if (meta && e.shiftKey && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault();
+    if (syncBtn) syncBtn.click();
+    return;
+  }
   if (e.key === 'Escape') {
     if (!inspectPanel.hidden) { closeInspect(); return; }
     if (!settingsPanel.hidden) { closeSettings(); return; }
@@ -1061,19 +1100,29 @@ const echoFilter = new WeakMap();
 const ECHO_WINDOW_MS = 150;
 
 let pendingScrollMsg = null;
+let pulseTimer = null;
+function pulseSyncBtn() {
+  if (!syncBtn) return;
+  syncBtn.classList.add('is-pulsing');
+  if (pulseTimer) clearTimeout(pulseTimer);
+  pulseTimer = setTimeout(() => syncBtn.classList.remove('is-pulsing'), 250);
+}
+
 function flushSyncScroll() {
   const d = pendingScrollMsg;
   pendingScrollMsg = null;
   if (!d) return;
   const frames = grid.querySelectorAll('.rt-device:not(.is-hidden) .rt-device__frame');
   const expires = performance.now() + ECHO_WINDOW_MS;
+  let sent = 0;
   for (let i = 0; i < frames.length; i++) {
     const frame = frames[i];
     const cw = frame.contentWindow;
     if (cw === d.source) continue;
     echoFilter.set(cw, { x: d.x, y: d.y, until: expires });
-    try { cw.postMessage({ rt: 'scroll', x: d.x, y: d.y }, '*'); } catch {}
+    try { cw.postMessage({ rt: 'scroll', x: d.x, y: d.y }, '*'); sent++; } catch {}
   }
+  if (sent > 0) pulseSyncBtn();
 }
 
 window.addEventListener('message', (e) => {
