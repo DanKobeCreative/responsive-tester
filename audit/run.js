@@ -25,7 +25,7 @@ const VIEWPORT_CHECKS = [overflowCheck, touchTargetsCheck, clippingCheck, a11yCh
 const PAGE_CHECKS = [metaCheck, copyCheck];
 
 function parseArgs(argv) {
-  const args = { url: null, viewports: 'default', out: null };
+  const args = { url: null, viewports: 'default', out: null, 'delay-ms': '0' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const [key, val] = a.startsWith('--') ? a.slice(2).split('=') : [null, null];
@@ -90,7 +90,9 @@ async function run() {
     }
 
     // Per-viewport passes
-    for (const v of viewports) {
+    const delayMs = parseInt(args['delay-ms'], 10) || 0;
+    for (const [i, v] of viewports.entries()) {
+      if (delayMs && i > 0) await new Promise((r) => setTimeout(r, delayMs));
       console.log(`  · ${v.name} (${v.w}×${v.h})`);
       const context = await browser.newContext({ viewport: { width: v.w, height: v.h }, deviceScaleFactor: 1, isMobile: v.type === 'mobile', hasTouch: v.type !== 'desktop' });
       const page = await context.newPage();
