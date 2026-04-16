@@ -2,6 +2,44 @@
 
 [hidden] { display: none !important; }
 
+/* ── Load progress toast ─────────────────────────────── */
+.rt-load-progress {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 501;
+  min-width: 220px;
+  padding: 10px 14px;
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-border);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--rt-text);
+}
+.rt-load-progress__bar {
+  width: 100%;
+  height: 3px;
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.rt-load-progress__fill {
+  height: 100%;
+  background: var(--rt-accent);
+  width: 0;
+  transition: width 0.25s ease;
+}
+.rt-load-progress__label {
+  color: var(--rt-text-dim);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── SVG icon sizing ────────────────────────────────── */
 .rt-icon {
   display: inline-block;
@@ -11,14 +49,56 @@
 
 button .rt-icon { pointer-events: none; }
 
+/* Keyboard-only focus ring. Applies everywhere so every interactive
+   element reads as focusable without relying on per-component styles. */
+:focus-visible {
+  outline: 2px solid var(--rt-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 html, body { margin: 0; padding: 0; height: 100%; }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* Safety net: every element inherits from body, so setting colour here
+     prevents overlays that live outside .rt-app (panels, toasts, modals)
+     from falling back to UA-default black. */
+  color: var(--rt-text);
+  background: var(--rt-bg);
 }
 
-.rt-app {
+/* Inline code inside panels / tables: give it a subtle contrast chip so
+   it's clearly a code token, not just styled mono text that fades into
+   the card surface. Inherits colour — works in both themes. */
+.rt-panel code,
+.rt-panel__body code,
+.rt-panel__row-kv code,
+.rt-panel__list code,
+.rt-panel__outline code,
+.rt-links__table code {
+  color: var(--rt-text);
+  background: rgba(148, 163, 184, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+}
+
+/* CSS variables live on :root so every element inherits them — including
+   panels, settings overlays and toasts that render as siblings of .rt-app
+   (fixed-position overlays outside the app container). If these live on
+   .rt-app, var() outside that scope resolves to unset → transparent
+   backgrounds and invisible borders. */
+:root {
+  /* Opts the entire document into automatic dark/light handling for
+     native form controls, scrollbars, and default text colours.
+     Without this the browser UA stylesheet assumes light mode and paints
+     raw <code>/<pre> text black, which reads as unreadable on a dark
+     panel surface. */
+  color-scheme: light dark;
+
   --rt-bg: #f8fafc;
   --rt-surface: #ffffff;
   --rt-sidebar: #f1f5f9;
@@ -34,6 +114,9 @@ body {
   --rt-warn: #f59e0b;
   --rt-ok: #10b981;
   --rt-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.rt-app {
   min-height: 100vh;
   padding: 24px;
   background: var(--rt-bg);
@@ -41,7 +124,7 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-  .rt-app {
+  :root {
     --rt-bg: #0b1120;
     --rt-surface: #131c2e;
     --rt-sidebar: #0f1828;
@@ -70,7 +153,6 @@ body {
 }
 
 .rt-toolbar + .rt-toolbar { margin-top: 10px; }
-.rt-app > .rt-toolbar:last-of-type { margin-bottom: 24px; }
 
 .rt-toolbar--secondary {
   padding: 6px 14px;
@@ -154,6 +236,14 @@ body {
   background: var(--rt-accent);
   border-color: var(--rt-accent);
   color: #fff;
+}
+
+/* Sync-scroll button pulses briefly every time the app broadcasts a
+   scroll — visual confirmation that sync is firing without needing
+   to open DevTools. Pulse is additive to .is-active. */
+.rt-toolbar__btn.is-pulsing {
+  box-shadow: 0 0 0 4px rgba(129, 140, 248, 0.35);
+  transition: box-shadow 0.25s ease;
 }
 
 @media (hover: hover) {
@@ -271,6 +361,11 @@ body {
   display: flex;
   gap: 24px;
   align-items: flex-start;
+  /* Gap between the secondary toolbar above and the sidebar/grid below.
+     Was previously attempted via `.rt-toolbar:last-of-type { margin-bottom }`
+     but `:last-of-type` matches by tag, not class — the body is the last
+     <div> sibling, so the selector never matched the toolbar. */
+  margin-top: 24px;
 }
 
 .rt-body--focus .rt-sidebar,
@@ -279,7 +374,7 @@ body {
 .rt-sidebar {
   flex-shrink: 0;
   width: 240px;
-  padding: 16px;
+  padding: 18px 16px;
   background: var(--rt-sidebar);
   border: 1px solid var(--rt-border);
   border-radius: 12px;
@@ -305,8 +400,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 12px;
-  margin-bottom: 12px;
+  padding-bottom: 16px;
+  margin-bottom: 20px;
   border-bottom: 1px solid var(--rt-border);
 }
 
@@ -337,8 +432,8 @@ body {
 }
 
 .rt-sidebar__section {
-  padding-bottom: 14px;
-  margin-bottom: 14px;
+  padding-bottom: 20px;
+  margin-bottom: 20px;
   border-bottom: 1px solid var(--rt-border);
 }
 
@@ -357,7 +452,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--rt-text-dim);
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .rt-sidebar__empty {
@@ -369,8 +464,8 @@ body {
 .rt-sidebar__bookmark {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-bottom: 4px;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
 .rt-sidebar__bookmark-load {
@@ -412,8 +507,8 @@ body {
 .rt-sidebar__toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 0;
+  gap: 10px;
+  padding: 7px 0;
   cursor: pointer;
 }
 
@@ -452,6 +547,13 @@ body {
   flex-direction: column;
   gap: 6px;
   align-self: flex-start;
+  /* Offscreen devices skip layout + paint entirely via content-visibility.
+     contain-intrinsic-size is a hint so the browser reserves vertical
+     space without having to actually render — prevents scroll jumping.
+     Huge win on 20-device grids at low scale where most devices live
+     offscreen during normal interaction. */
+  content-visibility: auto;
+  contain-intrinsic-size: 400px 700px;
 }
 
 .rt-device.is-hidden { display: none; }
@@ -658,6 +760,7 @@ body {
   width: 460px;
   max-width: calc(100vw - 48px);
   background: var(--rt-surface);
+  color: var(--rt-text);
   border: 1px solid var(--rt-border);
   border-radius: 12px;
   box-shadow: 0 30px 80px rgba(15, 23, 42, 0.25);
@@ -876,6 +979,7 @@ body {
   width: 540px;
   max-width: calc(100vw - 48px);
   background: var(--rt-surface);
+  color: var(--rt-text);
   border: 1px solid var(--rt-border);
   border-radius: 12px;
   box-shadow: 0 30px 80px rgba(15, 23, 42, 0.25);
@@ -895,49 +999,97 @@ body {
 
 .rt-panel__tabs {
   display: flex;
-  gap: 2px;
+  gap: 4px;
+  padding: 4px;
+  background: var(--rt-bg);
+  border-radius: 999px;
 }
 
 .rt-panel__tab {
-  padding: 6px 12px;
+  padding: 6px 14px;
   background: transparent;
   border: 0;
   border-radius: 999px;
   font: inherit;
   font-size: 12px;
+  font-weight: 500;
   color: var(--rt-text-dim);
   cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
+.rt-panel__tab:hover { color: var(--rt-text); }
+
 .rt-panel__tab.is-active {
-  background: var(--rt-bg);
-  color: var(--rt-text);
+  background: var(--rt-accent);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.15);
 }
+
+.rt-panel__tab.is-active:hover { color: #fff; }
 
 
 .rt-panel__body {
   flex: 1;
   overflow-y: auto;
-  padding: 14px 18px;
+  padding: 16px 18px 24px;
   font-size: 12px;
 }
 
+/* Each h5 in the panel body starts a visually distinct section. The h5
+   itself acts as the section header, and the next sibling (table, list,
+   p) is styled as a contained card so content doesn't float loose. */
 .rt-panel__body h5 {
-  margin: 16px 0 6px;
-  font-size: 11px;
-  font-weight: 600;
+  margin: 22px 0 8px;
+  font-size: 10px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--rt-text-dim);
+  letter-spacing: 0.1em;
+  color: var(--rt-accent);
 }
 
 .rt-panel__body h5:first-child { margin-top: 0; }
+
+/* Wrap the content directly following each h5 in a card-like container.
+   Applies to tables, lists, and paragraphs that immediately follow.
+
+   color-mix lifts the card ~8% toward a light tint so it visibly sits
+   *above* the panel surface rather than blending into it. Works in
+   both themes: in dark mode it lightens toward a slate-blue; in light
+   mode it darkens into a soft grey. */
+.rt-panel__body h5 + .rt-panel__table,
+.rt-panel__body h5 + .rt-panel__list,
+.rt-panel__body h5 + .rt-panel__outline,
+.rt-panel__body h5 + .rt-warnings,
+.rt-panel__body h5 + p {
+  background: color-mix(in srgb, var(--rt-surface), #94a3b8 8%);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
+  padding: 0;
+  margin: 0 0 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.rt-panel__body h5 + p {
+  padding: 10px 12px;
+  color: var(--rt-text-dim);
+}
+
+.rt-panel__body h5 + .rt-warnings {
+  padding: 8px 12px;
+}
 
 .rt-panel__loading,
 .rt-panel__error,
 .rt-panel__missing {
   color: var(--rt-text-dim);
   font-style: italic;
+}
+
+.rt-panel__loading {
+  padding: 16px;
+  text-align: center;
 }
 
 .rt-panel__error { color: var(--rt-danger); }
@@ -965,11 +1117,18 @@ body {
 
 .rt-panel__table th,
 .rt-panel__table td {
-  padding: 6px 8px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--rt-border);
   text-align: left;
   vertical-align: top;
   word-break: break-word;
+}
+
+.rt-panel__table tr:last-child th,
+.rt-panel__table tr:last-child td { border-bottom: 0; }
+
+.rt-panel__table tr:nth-child(even) {
+  background: rgba(148, 163, 184, 0.04);
 }
 
 .rt-panel__table th {
@@ -983,20 +1142,27 @@ body {
 .rt-panel__list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 8px 12px;
   font-size: 11px;
 }
 
 .rt-panel__list li {
-  padding: 2px 0;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--rt-border);
   word-break: break-all;
 }
+
+.rt-panel__list li:last-child { border-bottom: 0; }
 
 .rt-panel__outline {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 8px 12px;
   font-size: 11px;
+}
+
+.rt-panel__outline li {
+  padding: 3px 0;
 }
 
 .rt-panel__h {
@@ -1054,25 +1220,26 @@ body {
 .rt-social__grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 16px;
+  gap: 20px;
 }
 
 .rt-social__card {
-  border: 1px solid var(--rt-border);
+  border: 1px solid rgba(148, 163, 184, 0.3);
   border-radius: 10px;
   overflow: hidden;
-  background: var(--rt-surface);
+  background: color-mix(in srgb, var(--rt-surface), #94a3b8 8%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 .rt-social__label {
   font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--rt-text-dim);
-  padding: 6px 12px;
-  background: var(--rt-bg);
-  border-bottom: 1px solid var(--rt-border);
+  color: var(--rt-accent);
+  padding: 10px 14px;
+  background: var(--rt-surface);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 .rt-social__img {
@@ -1097,6 +1264,25 @@ body {
   font-size: 11px;
   color: var(--rt-text-dim);
   font-style: italic;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent 0 8px,
+    rgba(148, 163, 184, 0.12) 8px 9px
+  );
+}
+
+.rt-social__noimg::before {
+  content: "⊘";
+  font-style: normal;
+  font-size: 16px;
+  color: var(--rt-text-dim);
+  opacity: 0.5;
 }
 
 .rt-social__body {
@@ -1135,12 +1321,6 @@ body {
 }
 .rt-social--tw .rt-social__title { font-weight: 500; }
 
-.rt-social--slack .rt-social__slack-bar {
-  width: 4px;
-  height: 100%;
-  position: absolute;
-}
-
 .rt-social--slack {
   display: grid;
   grid-template-columns: 4px 1fr;
@@ -1154,6 +1334,8 @@ body {
   background: #4a154b;
   margin: 10px 0 10px 10px;
   border-radius: 2px;
+  width: 4px;
+  min-height: 100%;
 }
 
 .rt-social--slack .rt-social__slack-body {
@@ -1250,33 +1432,50 @@ body {
 .rt-toolbar-reveal,
 .rt-sidebar-reveal {
   position: fixed;
-  top: 12px;
   width: 36px;
   height: 36px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--rt-surface, #fff);
-  border: 1px solid var(--rt-border, #e2e8f0);
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-border);
   border-radius: 50%;
-  color: var(--rt-text-dim, #64748b);
+  color: var(--rt-text-dim);
   cursor: pointer;
   z-index: 500;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
   opacity: 0;
-  transform: scale(0.8);
   pointer-events: none;
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-.rt-toolbar-reveal { right: 12px; }
-.rt-sidebar-reveal { left: 12px; }
+/* Toolbar reveal: top-center, clear of any side panel (panel sits top-right
+   at 24/24). Toolbar-hidden means the whole top bar is gone, so the center
+   position feels like the obvious "pull down" affordance. */
+.rt-toolbar-reveal {
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%) scale(0.8);
+}
 
-.rt-toolbars-hidden .rt-toolbar-reveal,
+/* Sidebar reveal: vertically centered on the left edge. Reads as a pull-tab
+   for the hidden sidebar and keeps it clear of the top toolbar area. */
+.rt-sidebar-reveal {
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%) scale(0.8);
+}
+
+.rt-toolbars-hidden .rt-toolbar-reveal {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+  pointer-events: auto;
+}
+
 .rt-sidebar-hidden .rt-sidebar-reveal {
   opacity: 1;
-  transform: scale(1);
+  transform: translateY(-50%) scale(1);
   pointer-events: auto;
 }
 

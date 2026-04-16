@@ -11,10 +11,11 @@
     <div class="rt-app">
       <div class="rt-toolbar">
         <input
-          type="url"
+          type="text"
+          inputmode="url"
           class="rt-toolbar__url js-rt-url"
           list="rt-recent"
-          placeholder="https://your-client-site.staging.kobecreative.co.uk"
+          placeholder="monvrchs.staging.kobecreative.co.uk"
           spellcheck="false"
           autocomplete="off"
         />
@@ -30,7 +31,14 @@
         </div>
         <label class="rt-toolbar__scale">
           <span>Scale</span>
-          <input type="range" min="20" max="100" step="5" value="40" class="rt-toolbar__scale-range js-rt-scale" />
+          <input type="range" min="20" max="100" step="5" value="40" list="rt-scale-snaps" class="rt-toolbar__scale-range js-rt-scale" />
+          <datalist id="rt-scale-snaps">
+            <option value="25"></option>
+            <option value="33"></option>
+            <option value="50"></option>
+            <option value="75"></option>
+            <option value="100"></option>
+          </datalist>
           <span class="rt-toolbar__scale-value js-rt-scale-value">40%</span>
         </label>
         <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-settings" title="Settings (⌘,)" aria-label="Settings" data-icon="settings"></button>
@@ -78,6 +86,12 @@
         <aside class="rt-sidebar js-rt-sidebar"></aside>
         <div class="rt-grid js-rt-grid"></div>
       </div>
+    </div>
+
+    <!-- Load progress toast (shows while iframes are queueing) -->
+    <div class="rt-load-progress js-rt-load-progress" hidden>
+      <div class="rt-load-progress__bar"><div class="rt-load-progress__fill js-rt-load-progress-fill"></div></div>
+      <div class="rt-load-progress__label js-rt-load-progress-label">Loading…</div>
     </div>
 
     <!-- Floating restore buttons (only visible when their target is hidden) -->
