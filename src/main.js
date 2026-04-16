@@ -55,6 +55,7 @@ const defaults = () => ({
   recent: [],
   auth: {},
   syncScroll: true,
+  browser: 'safari',   // focus-mode desktop chrome: safari | chrome | firefox
   layoutMode: 'grid',
   cbFilter: 'none',
   gridOverlay: 0,
@@ -418,22 +419,162 @@ function reloadFrames(srcId) {
   });
 }
 
+// Focus one device front-and-centre. The global applyScale() sizes iframes
+// for the grid (typically 40%); when maximised we recompute a scale that
+// fits the device's native dimensions in the viewport, dress the shell
+// with type-appropriate device chrome, and hide everything else via
+// .rt-body--focus. Esc exits (see keydown handler).
 function toggleMaximize(domId) {
   const wrap = grid.querySelector(`.rt-device[data-id="${CSS.escape(domId)}"]`);
   if (!wrap) return;
-  const isMax = wrap.classList.toggle('is-maximized');
-  document.body.classList.toggle('rt-body--focus', isMax);
-  if (isMax) {
-    document.querySelectorAll('.rt-device.is-maximized').forEach((el) => {
-      if (el !== wrap) el.classList.remove('is-maximized');
-    });
+  if (wrap.classList.contains('is-maximized')) { exitMaximize(); return; }
+
+  // Drop any previous maximised card before opening a new one.
+  document.querySelectorAll('.rt-device.is-maximized').forEach((el) => {
+    el.classList.remove('is-maximized');
+    removeDeviceChrome(el);
+  });
+
+  const d = new Map(allDevices().map((x) => [x.id, x])).get(wrap.dataset.srcId);
+  if (!d) return;
+  const { w, h } = dimsFor(d);
+
+  wrap.classList.add('is-maximized');
+  document.body.classList.add('rt-body--focus');
+  addDeviceChrome(wrap, d);
+  applyFocusScale(wrap, w, h);
+}
+
+// Devices without a physical home button (iPhone 8 and earlier had one, SE
+// still does). All modern Androids and iPhones ship with the home gesture
+// pill instead. Used to decide whether to render the home indicator.
+const HAS_HOME_BUTTON = new Set(['iphone-se']);
+
+function addDeviceChrome(wrap, device) {
+  const shell = wrap.querySelector('.rt-device__shell');
+  if (!shell || shell.querySelector('.rt-chrome')) return;
+
+  if (device.type === 'desktop') {
+    addBrowserChrome(shell);
+    return;
+  }
+
+  if (device.type !== 'mobile') return;
+
+  // Status bar: static "9:41" like Apple marketing because real time adds
+  // a per-minute re-render for zero functional benefit. Signal / wifi /
+  // battery rendered as tiny SVGs so they scale with the focus zoom.
+  const statusBar = document.createElement('div');
+  statusBar.className = 'rt-chrome rt-chrome--statusbar';
+  statusBar.innerHTML = `
+    <span class="rt-chrome__time">9:41</span>
+    <span class="rt-chrome__status-icons" aria-hidden="true">
+      <svg viewBox="0 0 18 10" width="18" height="10" fill="currentColor"><rect x="0" y="6" width="3" height="4" rx="0.5"/><rect x="4.5" y="4" width="3" height="6" rx="0.5"/><rect x="9" y="2" width="3" height="8" rx="0.5"/><rect x="13.5" y="0" width="3" height="10" rx="0.5"/></svg>
+      <svg viewBox="0 0 16 12" width="16" height="10" fill="currentColor"><path d="M8 11.5l-2.5-2.5c.7-.7 1.6-1 2.5-1s1.8.3 2.5 1L8 11.5zm0-5c-2.1 0-4 .8-5.5 2.3L0 6.3C2.1 4.2 5 3 8 3s5.9 1.2 8 3.3L13.5 8.8C12 7.3 10.1 6.5 8 6.5zM8 0C4.1 0 .5 1.4-2.3 4L.3 6.6C2.5 4.8 5.2 3.7 8 3.7s5.5 1.1 7.7 2.9l2.6-2.6C15.5 1.4 11.9 0 8 0z" transform="translate(0 1)"/></svg>
+      <svg viewBox="0 0 26 12" width="26" height="10" fill="none"><rect x="0.5" y="0.5" width="22" height="11" rx="2.5" stroke="currentColor" stroke-opacity="0.5"/><rect x="2" y="2" width="19" height="8" rx="1" fill="currentColor"/><rect x="23.5" y="4" width="1.5" height="4" rx="0.5" fill="currentColor" fill-opacity="0.5"/></svg>
+    </span>
+  `;
+  shell.appendChild(statusBar);
+
+  // Home indicator (modern phones only).
+  if (!HAS_HOME_BUTTON.has(device.id)) {
+    const home = document.createElement('div');
+    home.className = 'rt-chrome rt-chrome--home';
+    shell.appendChild(home);
   }
 }
 
-function exitMaximize() {
-  document.querySelectorAll('.rt-device.is-maximized').forEach((el) => el.classList.remove('is-maximized'));
-  document.body.classList.remove('rt-body--focus');
+function removeDeviceChrome(wrap) {
+  wrap.querySelectorAll('.rt-chrome').forEach((el) => el.remove());
 }
+
+// Desktop viewport chrome — traffic lights + tabbar + URL bar styled per
+// selected browser. The engine is still WebKit under the hood (Tauri
+// limitation); this is decorative so the focus view reads as "the site
+// in <browser>" instead of a raw rectangle.
+function addBrowserChrome(shell) {
+  const url = state.url || 'about:blank';
+  const host = (() => { try { return new URL(url).host; } catch { return url; } })();
+  const path = (() => { try { return new URL(url).pathname; } catch { return ''; } })();
+  const browser = state.browser || 'safari';
+
+  const lights = `
+    <span class="rt-bchrome__lights" aria-hidden="true">
+      <span class="rt-bchrome__dot rt-bchrome__dot--r"></span>
+      <span class="rt-bchrome__dot rt-bchrome__dot--y"></span>
+      <span class="rt-bchrome__dot rt-bchrome__dot--g"></span>
+    </span>`;
+
+  const padlock = `
+    <svg class="rt-bchrome__icon" viewBox="0 0 10 12" width="10" height="12" fill="currentColor" aria-hidden="true">
+      <path d="M5 0a3 3 0 00-3 3v2H1.5A1.5 1.5 0 000 6.5v4A1.5 1.5 0 001.5 12h7a1.5 1.5 0 001.5-1.5v-4A1.5 1.5 0 008.5 5H8V3a3 3 0 00-3-3zm0 1.5A1.5 1.5 0 016.5 3v2h-3V3A1.5 1.5 0 015 1.5z"/>
+    </svg>`;
+
+  let inner = '';
+  if (browser === 'chrome') {
+    inner = `
+      ${lights}
+      <span class="rt-bchrome__tabs">
+        <span class="rt-bchrome__tab is-active">${escapeHtml(host)}</span>
+        <span class="rt-bchrome__plus" aria-hidden="true">+</span>
+      </span>
+      <span class="rt-bchrome__url rt-bchrome__url--chrome">${padlock}<span class="rt-bchrome__url-text">${escapeHtml(host)}${escapeHtml(path)}</span></span>
+      <span class="rt-bchrome__avatar" aria-hidden="true"></span>`;
+  } else if (browser === 'firefox') {
+    inner = `
+      ${lights}
+      <span class="rt-bchrome__tabs">
+        <span class="rt-bchrome__tab is-active rt-bchrome__tab--ff">${escapeHtml(host)}</span>
+      </span>
+      <span class="rt-bchrome__url rt-bchrome__url--firefox">${padlock}<span class="rt-bchrome__url-text">${escapeHtml(host)}${escapeHtml(path)}</span></span>
+      <span class="rt-bchrome__burger" aria-hidden="true"><span></span><span></span><span></span></span>`;
+  } else {
+    // Safari — default; single URL bar, compact controls.
+    inner = `
+      ${lights}
+      <span class="rt-bchrome__url rt-bchrome__url--safari">${padlock}<span class="rt-bchrome__url-text">${escapeHtml(host)}</span></span>
+      <span class="rt-bchrome__tab-btn" aria-hidden="true"></span>`;
+  }
+
+  const bar = document.createElement('div');
+  bar.className = `rt-chrome rt-chrome--browser rt-chrome--browser-${browser}`;
+  bar.innerHTML = inner;
+  shell.appendChild(bar);
+}
+
+function applyFocusScale(wrap, w, h) {
+  // Generous padding: top toolbar clearance + bezel for the close affordance.
+  const availW = window.innerWidth - 80;
+  const availH = window.innerHeight - 140;
+  const fitScale = Math.min(availW / w, availH / h, 1);
+  const { shell, iframe } = getDeviceRefs(wrap);
+  shell.style.width = `${Math.round(w * fitScale) + 16}px`;
+  shell.style.height = `${Math.round(h * fitScale) + 16}px`;
+  iframe.style.width = `${w}px`;
+  iframe.style.height = `${h}px`;
+  iframe.style.transform = `scale(${fitScale})`;
+}
+
+function exitMaximize() {
+  document.querySelectorAll('.rt-device.is-maximized').forEach((el) => {
+    el.classList.remove('is-maximized');
+    removeDeviceChrome(el);
+  });
+  document.body.classList.remove('rt-body--focus');
+  // Snap everything back to the grid scale by re-running the global pass.
+  applyScale();
+}
+
+// Reapply fit-scale on window resize while a device is maximised so the
+// content stays centred if the user resizes the Tauri window.
+window.addEventListener('resize', () => {
+  const wrap = document.querySelector('.rt-device.is-maximized');
+  if (!wrap) return;
+  const d = new Map(allDevices().map((x) => [x.id, x])).get(wrap.dataset.srcId);
+  if (!d) return;
+  const { w, h } = dimsFor(d);
+  applyFocusScale(wrap, w, h);
+});
 
 // ── Drag-to-resize ──────────────────────────────────────────────────
 // Resize updates only the dragged device's own shell/iframe, batched via rAF.
@@ -977,6 +1118,50 @@ function clearRecent() {
 }
 
 // ── Wire events ─────────────────────────────────────────────────────
+// ── Open externally ──────────────────────────────────────────────────
+// Tauri's WebView only runs one engine (WKWebView on macOS). For bugs
+// that need a real engine (iOS Safari quirks, Blink/Gecko behaviour),
+// punt the URL out to the real app. iOS Simulator runs actual iPadOS/iOS
+// Safari in its own window — closest we can get to "real device testing"
+// without paying for BrowserStack.
+const openExternalWrap = document.querySelector('.js-rt-open-external');
+const openExternalTrigger = document.querySelector('.js-rt-open-external-trigger');
+const openExternalMenu = document.querySelector('.js-rt-open-external-menu');
+
+if (openExternalTrigger) {
+  openExternalTrigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = !openExternalMenu.hidden;
+    openExternalMenu.hidden = isOpen;
+    openExternalTrigger.setAttribute('aria-expanded', String(!isOpen));
+  });
+
+  // Click outside closes
+  document.addEventListener('click', (e) => {
+    if (!openExternalMenu.hidden && !openExternalWrap.contains(e.target)) {
+      openExternalMenu.hidden = true;
+      openExternalTrigger.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  document.querySelectorAll('.rt-open-external__item').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const target = btn.dataset.target;
+      openExternalMenu.hidden = true;
+      openExternalTrigger.setAttribute('aria-expanded', 'false');
+      const url = normaliseUrl(urlInput.value);
+      if (!url) { flash('Load a URL first.', true); return; }
+      try {
+        if (target === 'ios-simulator') flash('Launching iOS Simulator… this can take a few seconds.');
+        await invoke('open_externally', { target, url });
+        if (target !== 'ios-simulator') flash(`Opened in ${btn.textContent.trim().split(/\s+/)[0]}.`);
+      } catch (err) {
+        flash(String(err), true);
+      }
+    });
+  });
+}
+
 loadBtn.addEventListener('click', () => loadUrl());
 refreshBtn.addEventListener('click', () => loadUrl());
 bookmarkBtn.addEventListener('click', addBookmark);
@@ -996,6 +1181,24 @@ document.querySelector('.js-rt-auth-save').addEventListener('click', saveAuth);
 document.querySelector('.js-rt-custom-add').addEventListener('click', addCustomDevice);
 
 const SYNC_SNIPPET = `<script>(function(){if(window.parent===window)return;var ig=false;window.addEventListener('scroll',function(){if(ig){ig=false;return}parent.postMessage({rt:'scroll',y:scrollY,x:scrollX},'*')},{passive:true});window.addEventListener('message',function(e){if(e.data&&e.data.rt==='scroll'){ig=true;window.scrollTo(e.data.x,e.data.y)}})})();</script>`;
+
+// Browser-chrome selector — persists state.browser and live-updates the
+// focused device if one is currently maximised.
+document.querySelectorAll('.js-rt-browser').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const next = btn.dataset.browser;
+    if (state.browser === next) return;
+    state.browser = next;
+    saveState();
+    document.querySelectorAll('.js-rt-browser').forEach((b) => b.classList.toggle('is-active', b.dataset.browser === next));
+    const focused = document.querySelector('.rt-device.is-maximized');
+    if (focused) {
+      removeDeviceChrome(focused);
+      const d = new Map(allDevices().map((x) => [x.id, x])).get(focused.dataset.srcId);
+      if (d) addDeviceChrome(focused, d);
+    }
+  });
+});
 
 if (syncBtn) {
   syncBtn.addEventListener('click', () => {

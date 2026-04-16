@@ -525,7 +525,12 @@ body {
   flex: 1;
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  /* Stretch items to the tallest card in each row so gaps between rows
+     stay a uniform 24px regardless of device-height variation.
+     Previously `flex-start` top-aligned cards, which left a short
+     device like iPhone SE (667) sitting with a 100px+ hole between it
+     and the next row when it shared a row with Galaxy Z Fold (882). */
+  align-items: stretch;
   gap: 24px;
   min-height: 200px;
 }
@@ -546,7 +551,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  align-self: flex-start;
   /* Offscreen devices skip layout + paint entirely via content-visibility.
      contain-intrinsic-size is a hint so the browser reserves vertical
      space without having to actually render — prevents scroll jumping.
@@ -560,13 +564,305 @@ body {
 
 .rt-device.is-maximized {
   position: fixed;
-  inset: 120px 24px 24px 24px;
+  inset: 0;
   z-index: 100;
-  background: var(--rt-bg);
-  padding: 20px;
-  border-radius: 12px;
-  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.3);
+  background: rgba(0, 0, 0, 0.78);
+  padding: 32px;
+  border-radius: 0;
+  box-shadow: none;
   overflow: auto;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  justify-items: center;
+  align-items: center;
+  gap: 16px;
+  /* Disable the content-visibility optimisation while this card is
+     the only thing on screen — it adds nothing and can delay first
+     paint of the focused frame. */
+  content-visibility: visible;
+  contain-intrinsic-size: auto;
+}
+
+.rt-device.is-maximized .rt-device__label {
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-border);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.rt-device.is-maximized .rt-device__shell {
+  margin: 0;
+  /* Deep depth shadow so the device reads as a physical object sitting
+     in front of the dimmed backdrop. */
+  box-shadow: 0 40px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+/* Per-type bezel in focus mode. Grid view stays flat — dressing 20
+   devices with chrome would be visual noise. Only the focused card gets
+   the physical-device treatment. */
+.rt-device.is-maximized[data-type="mobile"] .rt-device__shell {
+  border-radius: 44px;
+  padding: 28px 14px 30px;
+  background: #0a0a0a;
+  border: 1px solid #1d1d1d;
+}
+
+.rt-device.is-maximized[data-type="mobile"] .rt-device__frame {
+  border-radius: 22px;
+}
+
+.rt-device.is-maximized[data-type="tablet"] .rt-device__shell {
+  border-radius: 22px;
+  padding: 18px;
+  background: #0d0d0d;
+  border: 1px solid #1d1d1d;
+}
+
+.rt-device.is-maximized[data-type="tablet"] .rt-device__frame {
+  border-radius: 8px;
+}
+
+.rt-device.is-maximized[data-type="desktop"] .rt-device__shell {
+  /* Desktop in focus mode leaves room at the top for the browser
+     chrome bar (38px + 8px top + 8px below). The iframe sits below it. */
+  border-radius: 12px;
+  padding: 54px 10px 10px;
+  background: #0d0d0d;
+  border: 1px solid #1d1d1d;
+}
+
+.rt-device.is-maximized[data-type="desktop"] .rt-device__frame {
+  border-radius: 4px;
+}
+
+/* Device chrome — injected into the shell in focus mode only. Positioned
+   absolutely so the iframe's layout isn't disrupted. pointer-events none
+   so users can still click through to the rendered page. */
+.rt-chrome {
+  position: absolute;
+  pointer-events: none;
+  z-index: 3;
+  color: #fff;
+}
+
+.rt-chrome--statusbar {
+  top: 8px;
+  left: 28px;
+  right: 28px;
+  height: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.rt-chrome__status-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rt-chrome__status-icons svg {
+  display: block;
+}
+
+.rt-chrome--home {
+  bottom: 9px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+/* ── Browser-chrome dots in the toolbar selector ─────────── */
+.rt-browser-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.rt-browser-dot--safari  { background: linear-gradient(135deg, #3b82f6, #1e3a8a); }
+.rt-browser-dot--chrome  { background: conic-gradient(from 90deg, #ea4335 0 33%, #fbbc04 33% 66%, #34a853 66% 100%); position: relative; }
+.rt-browser-dot--chrome::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: #4285f4; }
+.rt-browser-dot--firefox { background: radial-gradient(circle at 35% 35%, #ff9500 0%, #e64a19 40%, #8e2de2 80%, #3b5998 100%); }
+.rt-browser-dot--ios     { background: linear-gradient(135deg, #64748b, #1e293b); }
+
+/* ── Open-externally menu ─────────────────────────────────── */
+.rt-open-external {
+  position: relative;
+}
+
+.rt-open-external__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 260px;
+  padding: 6px;
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-border);
+  border-radius: 10px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  z-index: 400;
+}
+
+.rt-open-external__heading {
+  padding: 6px 10px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--rt-text-dim);
+}
+
+.rt-open-external__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--rt-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.rt-open-external__item:hover,
+.rt-open-external__item:focus-visible {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.rt-open-external__hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--rt-text-dim);
+  font-style: italic;
+}
+
+.rt-open-external__sep {
+  margin: 6px 4px;
+  height: 1px;
+  background: var(--rt-border);
+}
+
+/* ── Focus-mode browser chrome (desktop viewports) ───────── */
+.rt-chrome--browser {
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  background: rgba(18, 18, 20, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.rt-bchrome__lights { display: inline-flex; gap: 6px; flex-shrink: 0; }
+.rt-bchrome__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.25);
+}
+.rt-bchrome__dot--r { background: #ff5f56; }
+.rt-bchrome__dot--y { background: #ffbd2e; }
+.rt-bchrome__dot--g { background: #27c93f; }
+
+.rt-bchrome__url {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.8);
+  overflow: hidden;
+}
+.rt-bchrome__url-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.rt-bchrome__icon { opacity: 0.7; flex-shrink: 0; }
+
+/* Per-browser accents */
+.rt-chrome--browser-safari .rt-bchrome__url { background: rgba(255, 255, 255, 0.12); text-align: center; justify-content: center; }
+.rt-chrome--browser-chrome .rt-bchrome__url { background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(66, 133, 244, 0.3); }
+.rt-chrome--browser-firefox .rt-bchrome__url { background: rgba(30, 30, 40, 0.6); border: 1px solid rgba(255, 149, 0, 0.3); }
+
+.rt-bchrome__tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.rt-bchrome__tab {
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 6px 6px 0 0;
+  font-size: 10px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rt-bchrome__tab.is-active { background: rgba(255, 255, 255, 0.18); }
+.rt-bchrome__tab--ff { border-bottom: 2px solid #ff9500; }
+.rt-bchrome__plus {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.rt-bchrome__avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6366f1, #a855f7);
+  flex-shrink: 0;
+}
+.rt-bchrome__burger {
+  width: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.rt-bchrome__burger span {
+  height: 1.5px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 1px;
+}
+.rt-bchrome__tab-btn {
+  width: 16px;
+  height: 12px;
+  border: 1.5px solid rgba(255, 255, 255, 0.5);
+  border-radius: 2px;
+  flex-shrink: 0;
 }
 
 .rt-device__label {
