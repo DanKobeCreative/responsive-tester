@@ -23,8 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 
-# Local tooling
-.claude/
+# Local-only Claude Code overrides (committed settings.json is shared)
+.claude/settings.local.json
 
 # Build artefacts
 *.dmg
