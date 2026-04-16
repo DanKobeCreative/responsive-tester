@@ -16,13 +16,18 @@ npm run audit -- --url https://studio.staging.kobecreative.co.uk
 - `--viewports=galaxy-s24,iphone-16,full-hd` — explicit list
 - `--out <dir>` — custom output directory (defaults to `audit-runs/<timestamp>/`)
 - `--delay-ms=1000` — pause between viewports; useful when the target is behind aggressive rate-limiting (Hetzner fail2ban, Cloudflare, etc.)
-- `--vision` — enable the aesthetic pass via a local Ollama vision model (opt-in — adds ~10–30s per viewport)
-- `--vision-model=llama3.2-vision` — override the vision model (any Ollama vision-capable model works; must be `ollama pull`-ed already)
+- `--vision` — enable the aesthetic pass (alias for `--vision=ollama`)
+- `--vision=ollama` — local Ollama vision (free, modest quality, ~30–45s/viewport)
+- `--vision=api` — Anthropic API via Claude Haiku (pennies/run, Claude-grade judgment, ~2–5s/viewport)
+- `--vision-model=<id>` — override the vision model (any Ollama vision-capable model, or a specific Claude model id)
 - `--vision-host=http://localhost:11434` — override Ollama host
+- `--yes` / `-y` — skip the pre-run confirmation prompt on `--vision=api` (for scripting / CI)
 
-### Vision prerequisites
+### Vision backends
 
-The aesthetic check needs a local Ollama server with a vision model pulled. On Apple Silicon, **install the Ollama.app cask** (universal binary with Metal GPU support) rather than the formula, which ships an Intel-only binary that runs under Rosetta and is 10–20× slower:
+#### Ollama (local, free, modest quality)
+
+Apple Silicon: **install the cask**, not the formula — the formula ships Intel-only and runs under Rosetta (10–20× slower).
 
 ```bash
 brew install --cask ollama-app
@@ -30,16 +35,31 @@ open /Applications/Ollama.app    # starts the server, sits in menubar
 ollama pull llama3.2-vision
 ```
 
-### Quality expectations — read this
+Quality: ~40% signal / ~60% noise. The 11B model reliably catches overflow and obvious layout issues but hallucinates, misreads brand text, and struggles with nuance. Every finding needs human review.
 
-Local 11B vision models are a blunt instrument. Expect:
+#### Anthropic API (Claude Haiku 4.5 — pennies per run, Claude-grade judgment)
 
-- **Signal** — ~40% of findings are real and actionable (overflow, cropping, obvious misalignment)
-- **Noise** — ~60% are hallucinations ("text appears out of focus" on an intentionally stylised hero) or misreadings ("MONARCHS" when the word is "MONVRCHS")
+Get a key from [console.anthropic.com](https://console.anthropic.com) and drop it into a `.env` file at the project root (gitignored):
 
-Every finding needs a human pass before you act on it. The model is useful as a second set of eyes that points you at areas to inspect yourself, not as an authoritative QA.
+```bash
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env
+```
 
-If you want Claude-quality aesthetic review, swap `audit/checks/aesthetic.js` to call the Anthropic API (~£0.50 per audit on Haiku). Local inference will never match a frontier model on nuanced taste.
+Then:
+
+```bash
+npm run audit -- --url https://... --vision=api
+```
+
+Every `--vision=api` run prints a cost estimate and waits for a `y/N` confirmation before spending — pair with `--yes` in scripts / CI to skip. Approximate cost: **1–2p per 6-viewport run on Haiku**, scaling linearly with viewport count.
+
+You can override the model if you want sharper judgement:
+
+```bash
+npm run audit -- --url https://... --vision=api --vision-model=claude-sonnet-4-6
+```
+
+Roughly 3× the Haiku cost for measurably better taste-level critique.
 
 ## Output
 

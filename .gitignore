@@ -26,6 +26,10 @@ dist-ssr
 # Local-only Claude Code overrides (committed settings.json is shared)
 .claude/settings.local.json
 
+# Secrets — audit vision (API) reads ANTHROPIC_API_KEY from here
+.env
+.env.local
+
 # Build artefacts
 *.dmg
 

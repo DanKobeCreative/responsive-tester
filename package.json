@@ -12,6 +12,7 @@
     "audit": "node audit/run.js"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
     "@axe-core/playwright": "^4.11.1",
     "@rolldown/binding-darwin-arm64": "^1.0.0-rc.16",
     "@rolldown/pluginutils": "^1.0.0-rc.16",
