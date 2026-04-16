@@ -16,6 +16,30 @@ npm run audit -- --url https://studio.staging.kobecreative.co.uk
 - `--viewports=galaxy-s24,iphone-16,full-hd` — explicit list
 - `--out <dir>` — custom output directory (defaults to `audit-runs/<timestamp>/`)
 - `--delay-ms=1000` — pause between viewports; useful when the target is behind aggressive rate-limiting (Hetzner fail2ban, Cloudflare, etc.)
+- `--vision` — enable the aesthetic pass via a local Ollama vision model (opt-in — adds ~10–30s per viewport)
+- `--vision-model=llama3.2-vision` — override the vision model (any Ollama vision-capable model works; must be `ollama pull`-ed already)
+- `--vision-host=http://localhost:11434` — override Ollama host
+
+### Vision prerequisites
+
+The aesthetic check needs a local Ollama server with a vision model pulled. On Apple Silicon, **install the Ollama.app cask** (universal binary with Metal GPU support) rather than the formula, which ships an Intel-only binary that runs under Rosetta and is 10–20× slower:
+
+```bash
+brew install --cask ollama-app
+open /Applications/Ollama.app    # starts the server, sits in menubar
+ollama pull llama3.2-vision
+```
+
+### Quality expectations — read this
+
+Local 11B vision models are a blunt instrument. Expect:
+
+- **Signal** — ~40% of findings are real and actionable (overflow, cropping, obvious misalignment)
+- **Noise** — ~60% are hallucinations ("text appears out of focus" on an intentionally stylised hero) or misreadings ("MONARCHS" when the word is "MONVRCHS")
+
+Every finding needs a human pass before you act on it. The model is useful as a second set of eyes that points you at areas to inspect yourself, not as an authoritative QA.
+
+If you want Claude-quality aesthetic review, swap `audit/checks/aesthetic.js` to call the Anthropic API (~£0.50 per audit on Haiku). Local inference will never match a frontier model on nuanced taste.
 
 ## Output
 
