@@ -46,6 +46,48 @@ fn screenshot_batch_start() -> Result<String, String> {
     Ok(new_batch_dir()?.to_string_lossy().to_string())
 }
 
+/// Launch the given URL in an external macOS app or the iOS Simulator.
+/// `target` is one of: "safari", "chrome", "firefox", "ios-simulator".
+/// For ios-simulator we first boot Simulator.app (auto-selects the last-
+/// used device, or a default), then pipe the URL in via `xcrun simctl`.
+#[tauri::command]
+fn open_externally(target: String, url: String) -> Result<(), String> {
+    match target.as_str() {
+        "safari" => run_open(&["-a", "Safari", &url]),
+        "chrome" => run_open(&["-a", "Google Chrome", &url]),
+        "firefox" => run_open(&["-a", "Firefox", &url]),
+        "ios-simulator" => {
+            // Boot Simulator.app (no-op if already open) so a device is
+            // available for simctl to pipe the URL to.
+            let _ = Command::new("open").args(["-a", "Simulator"]).output();
+            // Give the Simulator a moment to finish booting a device — a
+            // cold-start takes ~2–3 seconds before simctl sees "booted".
+            std::thread::sleep(Duration::from_millis(2500));
+            let status = Command::new("xcrun")
+                .args(["simctl", "openurl", "booted", &url])
+                .output()
+                .map_err(|e| format!("xcrun failed: {}", e))?;
+            if !status.status.success() {
+                let stderr = String::from_utf8_lossy(&status.stderr);
+                return Err(format!(
+                    "iOS Simulator couldn't open the URL — make sure Xcode is installed and a simulator is booted ({}).",
+                    stderr.trim()
+                ));
+            }
+            Ok(())
+        }
+        other => Err(format!("Unknown target: {}", other)),
+    }
+}
+
+fn run_open(args: &[&str]) -> Result<(), String> {
+    Command::new("open")
+        .args(args)
+        .output()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 fn safe_filename(label: &str) -> String {
     label
         .chars()
@@ -275,6 +317,7 @@ pub fn run() {
             fetch_url_text,
             fetch_url_meta,
             check_links,
+            open_externally,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

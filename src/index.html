@@ -23,6 +23,17 @@
         <button class="rt-toolbar__btn rt-toolbar__btn--primary js-rt-load">Load</button>
         <button class="rt-toolbar__btn js-rt-refresh" title="Reload all frames (⌘R)">Refresh</button>
         <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-bookmark" title="Bookmark (⌘D)" aria-label="Bookmark" data-icon="bookmark"></button>
+        <div class="rt-open-external js-rt-open-external">
+          <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-open-external-trigger" title="Open current URL in an external browser / iOS Simulator" aria-label="Open externally" aria-haspopup="menu" aria-expanded="false" data-icon="external-link"></button>
+          <div class="rt-open-external__menu js-rt-open-external-menu" role="menu" hidden>
+            <div class="rt-open-external__heading">Open current URL in</div>
+            <button class="rt-open-external__item" role="menuitem" data-target="safari"><span class="rt-browser-dot rt-browser-dot--safari"></span><span>Safari</span><span class="rt-open-external__hint">WebKit (macOS)</span></button>
+            <button class="rt-open-external__item" role="menuitem" data-target="chrome"><span class="rt-browser-dot rt-browser-dot--chrome"></span><span>Chrome</span><span class="rt-open-external__hint">Blink</span></button>
+            <button class="rt-open-external__item" role="menuitem" data-target="firefox"><span class="rt-browser-dot rt-browser-dot--firefox"></span><span>Firefox</span><span class="rt-open-external__hint">Gecko</span></button>
+            <div class="rt-open-external__sep"></div>
+            <button class="rt-open-external__item" role="menuitem" data-target="ios-simulator"><span class="rt-browser-dot rt-browser-dot--ios"></span><span>iOS Simulator</span><span class="rt-open-external__hint">real iPadOS/iOS Safari</span></button>
+          </div>
+        </div>
         <div class="rt-toolbar__filter" role="tablist" aria-label="Device class filter">
           <button class="rt-toolbar__chip is-active js-rt-filter" data-filter="all" title="⌘0">All</button>
           <button class="rt-toolbar__chip js-rt-filter" data-filter="mobile" title="⌘1"><span class="rt-dot rt-dot--mobile"></span>Mobile</button>
@@ -50,6 +61,12 @@
           <button class="rt-toolbar__icon-btn js-rt-layout is-active" data-layout="grid" title="Grid layout" aria-label="Grid" data-icon="layout-grid"></button>
           <button class="rt-toolbar__icon-btn js-rt-layout" data-layout="row" title="Single row" aria-label="Row" data-icon="rows"></button>
           <button class="rt-toolbar__icon-btn js-rt-layout" data-layout="column" title="Single column" aria-label="Column" data-icon="columns"></button>
+        </div>
+
+        <div class="rt-toolbar__group js-rt-browser-group" role="group" aria-label="Browser chrome">
+          <button class="rt-toolbar__icon-btn js-rt-browser is-active" data-browser="safari" title="Safari" aria-label="Safari"><span class="rt-browser-dot rt-browser-dot--safari" aria-hidden="true"></span></button>
+          <button class="rt-toolbar__icon-btn js-rt-browser" data-browser="chrome" title="Chrome" aria-label="Chrome"><span class="rt-browser-dot rt-browser-dot--chrome" aria-hidden="true"></span></button>
+          <button class="rt-toolbar__icon-btn js-rt-browser" data-browser="firefox" title="Firefox" aria-label="Firefox"><span class="rt-browser-dot rt-browser-dot--firefox" aria-hidden="true"></span></button>
         </div>
 
         <button class="rt-toolbar__btn js-rt-grid-overlay" title="Toggle 8/12-column grid overlay">
