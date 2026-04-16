@@ -39,9 +39,21 @@ Output: `src-tauri/target/release/bundle/dmg/Responsive Tester_<version>_*.dmg`.
 - **Custom devices** — add your own width/height under Settings → Add custom device.
 - **Basic auth** — save `user:pass` per host in Settings; credentials auto-embedded in the URL on load.
 - **Load-failure detection** — frames that fail or time out (8s) show a card explaining the likely cause (CSP `frame-ancestors`, network, etc).
-- **Sync scroll** — optional; requires a one-line opt-in script on client staging sites (snippet in Settings panel).
+- **Sync scroll** — on by default. Auto-injects the bridge into same-origin iframes; cross-origin sites (every Kobe client theme) ship the bridge themselves. Parent-side echo suppression stops feedback loops.
 - **Dark mode** — follows system `prefers-color-scheme`.
 - **CLI launch** — `open -a "Responsive Tester" --args https://foo.staging.kobecreative.co.uk` preloads the URL. Hooks cleanly into `/verify`, `/audit`, etc.
+
+## Audit CLI
+
+A Playwright-driven responsive audit lives under [`audit/`](./audit/). Drives Chromium across a grid of viewports and emits a markdown report + screenshots per viewport. See [audit/README.md](./audit/README.md) for full docs.
+
+```bash
+npm run audit -- --url https://studio.staging.kobecreative.co.uk
+npm run audit -- --url https://... --vision=api    # Claude Haiku aesthetic pass
+npm run audit -- --url https://... --viewports=all
+```
+
+Checks: horizontal overflow, touch-target sizing, text clipping, axe-core WCAG, console + network errors, missing meta / OG tags, placeholder copy, stale years, em-dashes. Optional vision pass via local Ollama or Anthropic API adds aesthetic / hierarchy / CTA judgment.
 
 ## Keyboard shortcuts
 
@@ -51,8 +63,13 @@ Output: `src-tauri/target/release/bundle/dmg/Responsive Tester_<version>_*.dmg`.
 | ⌘R | Reload all frames |
 | ⌘D | Bookmark current URL |
 | ⌘0 / ⌘1 / ⌘2 / ⌘3 | Filter all / mobile / tablet / desktop |
+| ⌘= / ⌘− | Scale up / down 5% |
+| ⌘[ / ⌘] | Reference-image opacity down / up |
 | ⌘, | Open settings |
-| Esc | Close settings or exit focused device |
+| ⌘. | Hide / show toolbars |
+| ⌘B | Hide / show sidebar |
+| ⌘⇧S | Toggle scroll sync |
+| Esc | Close panels or exit focused device |
 
 ## Notes
 
