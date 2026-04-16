@@ -71,7 +71,15 @@ function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaults();
-    return { ...defaults(), ...JSON.parse(raw) };
+    const merged = { ...defaults(), ...JSON.parse(raw) };
+    // One-off migration: sync-scroll is meant to be on by default. Users
+    // whose persisted state has it stuck off from an earlier version get
+    // flipped back once. Subsequent toggles are respected normally.
+    if (!merged._migratedSyncDefault) {
+      merged.syncScroll = true;
+      merged._migratedSyncDefault = true;
+    }
+    return merged;
   } catch {
     return defaults();
   }
@@ -82,6 +90,8 @@ function saveState() {
 }
 
 const state = loadState();
+// Persist immediately if loadState did a migration, so the reset sticks.
+saveState();
 const allDevices = () => [...DEFAULT_DEVICES, ...state.customDevices];
 
 // ── DOM refs ────────────────────────────────────────────────────────
@@ -291,22 +301,40 @@ function buildAll() {
 }
 
 // ── Scale + visibility ──────────────────────────────────────────────
+// applyScale can fire 60+ times/sec while dragging the scale slider. Cache
+// the device DOM refs on the wrapper element (once), look up the device
+// model via a map rather than Array.find(), and read state.scale once so
+// we don't thrash on every input event.
+function getDeviceRefs(wrap) {
+  if (!wrap._rtRefs) {
+    wrap._rtRefs = {
+      shell: wrap.querySelector('.rt-device__shell'),
+      iframe: wrap.querySelector('.rt-device__frame'),
+      dims: wrap.querySelector('.js-rt-dims'),
+    };
+  }
+  return wrap._rtRefs;
+}
+
 function applyScale() {
-  grid.querySelectorAll('.rt-device').forEach((wrap) => {
-    const d = allDevices().find((x) => x.id === wrap.dataset.srcId);
-    if (!d) return;
+  const scale = state.scale;
+  const deviceMap = new Map(allDevices().map((d) => [d.id, d]));
+  const wraps = grid.querySelectorAll('.rt-device');
+  for (let i = 0; i < wraps.length; i++) {
+    const wrap = wraps[i];
+    const d = deviceMap.get(wrap.dataset.srcId);
+    if (!d) continue;
     const { w, h } = dimsFor(d);
-    const shell = wrap.querySelector('.rt-device__shell');
-    const iframe = wrap.querySelector('.rt-device__frame');
-    const scaledW = Math.round(w * state.scale);
-    const scaledH = Math.round(h * state.scale);
+    const { shell, iframe, dims } = getDeviceRefs(wrap);
+    const scaledW = Math.round(w * scale);
+    const scaledH = Math.round(h * scale);
     shell.style.width = `${scaledW + 16}px`;
     shell.style.height = `${scaledH + 16}px`;
     iframe.style.width = `${w}px`;
     iframe.style.height = `${h}px`;
-    iframe.style.transform = `scale(${state.scale})`;
-    wrap.querySelector('.js-rt-dims').textContent = `${w} × ${h}`;
-  });
+    iframe.style.transform = `scale(${scale})`;
+    if (dims) dims.textContent = `${w} × ${h}`;
+  }
 }
 
 // Hidden iframes still run JS + keep their pages in memory, which makes the
@@ -441,6 +469,37 @@ function attachResize(wrap, handle) {
 // timeout elapses — used by LoadQueue to stagger concurrent loads.
 const loadQueue = new LoadQueue(4);
 
+// Inject the sync-scroll bridge into an iframe's document. Only works on
+// same-origin iframes — we check origins up-front and bail silently on
+// cross-origin so the browser doesn't log a SecurityError from
+// contentDocument access. For cross-origin sites, the bridge must be
+// shipped by the site itself (every Kobe client theme does).
+function injectSyncBridge(iframe) {
+  // Skip silently if iframe src is clearly a different origin.
+  try {
+    const iframeUrl = new URL(iframe.src, location.href);
+    if (iframeUrl.origin !== location.origin) return;
+  } catch { return; }
+  const doc = iframe.contentDocument;
+  if (!doc) return;
+  if (doc.querySelector('[data-rt-bridge]')) return;
+  const s = doc.createElement('script');
+  s.setAttribute('data-rt-bridge', '');
+  s.textContent = `
+    (function () {
+      if (window.__rtBridge) return;
+      window.__rtBridge = true;
+      window.addEventListener('scroll', function () {
+        parent.postMessage({ rt: 'scroll', x: scrollX, y: scrollY }, '*');
+      }, { passive: true });
+      window.addEventListener('message', function (e) {
+        if (e.data && e.data.rt === 'scroll') window.scrollTo(e.data.x, e.data.y);
+      });
+    })();
+  `;
+  doc.head.appendChild(s);
+}
+
 function loadFrame(iframe, wrap, url, isDark = false) {
   return new Promise((resolve) => {
     const overlay = wrap.querySelector('.rt-device__overlay');
@@ -479,6 +538,12 @@ function loadFrame(iframe, wrap, url, isDark = false) {
       loaded = true;
       clearTimeout(timer);
       if (timedOut) { overlay.hidden = true; overlay.innerHTML = ''; }
+      // Best-effort sync-scroll bridge injection: works on same-origin
+      // sites or sites that don't block contentDocument access. Cross-
+      // origin sites must ship the bridge themselves (all Kobe client
+      // themes already do — see studio-sync memory). Swallow access
+      // errors silently.
+      try { injectSyncBridge(iframe); } catch { /* cross-origin */ }
       settle();
     }, { once: true });
 
@@ -935,11 +1000,25 @@ filterBtns.forEach((btn) => btn.addEventListener('click', () => setFilter(btn.da
 panelBtns.forEach((b) => b.addEventListener('click', () => openInspect(b.dataset.tab)));
 inspectTabs.forEach((t) => t.addEventListener('click', () => openInspect(t.dataset.tab)));
 
+// Scale slider can fire 60+ input events/sec while dragging. saveState is
+// synchronous localStorage (fine but wasteful), applyScale touches every
+// device. Split the path: label + layout update via rAF on every input,
+// localStorage persist only on change (commit at the end of the drag).
+let scaleRaf = null;
+function applyScaleRaf() {
+  scaleRaf = null;
+  scaleValue.textContent = `${Math.round(state.scale * 100)}%`;
+  applyScale();
+}
+
 scaleInput.addEventListener('input', () => {
   state.scale = parseInt(scaleInput.value, 10) / 100;
-  scaleValue.textContent = `${scaleInput.value}%`;
+  if (scaleRaf == null) scaleRaf = requestAnimationFrame(applyScaleRaf);
+});
+
+scaleInput.addEventListener('change', () => {
+  // Fires on mouseup / keyboard commit — persist the final value once.
   saveState();
-  applyScale();
 });
 
 // ── Keyboard shortcuts ──────────────────────────────────────────────
@@ -968,14 +1047,49 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ── Sync scroll (cross-origin opt-in) ───────────────────────────────
+// Fan-out happens on every scroll event from every iframe — can be 20×
+// per frame. Coalesce into a single rAF-batched rebroadcast so DOM query
+// and postMessage spam don't starve the main thread.
+//
+// Echo suppression: when we programmatically scroll a receiving iframe
+// via postMessage, its own scroll-event handler fires and posts the new
+// position *back* to us — an echo that must not be rebroadcast, or every
+// scroll turns into an N² ping-pong and the previews drift apart.
+// WeakMap keyed by the iframe's contentWindow so GC reclaims entries
+// when the iframe navigates or is removed.
+const echoFilter = new WeakMap();
+const ECHO_WINDOW_MS = 150;
+
+let pendingScrollMsg = null;
+function flushSyncScroll() {
+  const d = pendingScrollMsg;
+  pendingScrollMsg = null;
+  if (!d) return;
+  const frames = grid.querySelectorAll('.rt-device:not(.is-hidden) .rt-device__frame');
+  const expires = performance.now() + ECHO_WINDOW_MS;
+  for (let i = 0; i < frames.length; i++) {
+    const frame = frames[i];
+    const cw = frame.contentWindow;
+    if (cw === d.source) continue;
+    echoFilter.set(cw, { x: d.x, y: d.y, until: expires });
+    try { cw.postMessage({ rt: 'scroll', x: d.x, y: d.y }, '*'); } catch {}
+  }
+}
+
 window.addEventListener('message', (e) => {
   if (!state.syncScroll) return;
   const d = e.data;
   if (!d || d.rt !== 'scroll') return;
-  grid.querySelectorAll('.rt-device:not(.is-hidden) .rt-device__frame').forEach((frame) => {
-    if (frame.contentWindow === e.source) return;
-    try { frame.contentWindow.postMessage({ rt: 'scroll', x: d.x, y: d.y }, '*'); } catch {}
-  });
+  // Drop echoes: this source was just sent an identical (x,y) — the post
+  // we're seeing is the programmatic scroll handler firing back.
+  const expected = echoFilter.get(e.source);
+  if (expected && expected.x === d.x && expected.y === d.y && performance.now() < expected.until) {
+    echoFilter.delete(e.source);
+    return;
+  }
+  const wasEmpty = pendingScrollMsg === null;
+  pendingScrollMsg = { x: d.x, y: d.y, source: e.source };
+  if (wasEmpty) requestAnimationFrame(flushSyncScroll);
 });
 
 // ── CLI-arg preload ─────────────────────────────────────────────────
