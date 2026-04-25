@@ -79,6 +79,18 @@ const ICONS = {
     '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   'smartphone':
     '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
+  'square':
+    '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+  'arrow-up':
+    '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  'arrow-down':
+    '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
+  'trash-2':
+    '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+  'plus':
+    '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  'pencil':
+    '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
 };
 
 export function icon(name, size = 14) {

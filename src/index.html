@@ -12,6 +12,7 @@
       <nav class="rt-modes" role="tablist" aria-label="Workspace mode">
         <button class="rt-modes__tab is-active js-rt-mode" data-mode="preview" role="tab" aria-selected="true">Preview</button>
         <button class="rt-modes__tab js-rt-mode" data-mode="cross-browser" role="tab" aria-selected="false">Cross-Browser</button>
+        <button class="rt-modes__tab js-rt-mode" data-mode="qa-session" role="tab" aria-selected="false">QA Session</button>
       </nav>
       <div class="rt-toolbar">
         <input
@@ -113,6 +114,8 @@
       </div>
 
       <div class="rt-body rt-body--qa js-rt-body-cross-browser" hidden></div>
+
+      <div class="rt-body rt-body--qa js-rt-body-qa-session" hidden></div>
     </div>
 
     <!-- Load progress toast (shows while iframes are queueing) -->
