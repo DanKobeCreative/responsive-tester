@@ -9,7 +9,7 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-import { escapeHtml, escapeAttr, flash, hostOf } from './utils.js';
+import { escapeHtml, escapeAttr, flash, hostOf, promptModal } from './utils.js';
 import { icon } from './icons.js';
 
 const ENGINES = [
@@ -423,13 +423,183 @@ export function initCrossBrowser({ container, getCurrentUrl, getAuth, allDevices
     }
   });
 
+  // ── Baselines + visual diff (Layer 4) ───────────────────────────────
+  // Compare-mode state. When compareMode is true, the results grid is
+  // re-rendered in a 3-col layout (Baseline | Current | Diff) per
+  // (engine, viewport) pair, with mismatch-percentage badges.
+  let cachedBaseline = null;        // { id, url, urlSlug, label, ... }
+  let compareMode = false;
+  const diffResults = new Map();    // `${engine}__${viewport}` → { mismatchPct, diffPath, ... }
+
+  async function refreshBaselineForCurrentUrl() {
+    const url = getCurrentUrl();
+    if (!url) { cachedBaseline = null; ui.compareBtn.disabled = true; return; }
+    cachedBaseline = await invoke('qa_get_baseline_for_url', { url }).catch(() => null);
+    ui.compareBtn.disabled = !cachedBaseline;
+    ui.compareBtn.title = cachedBaseline
+      ? `Baseline saved ${new Date(cachedBaseline.createdMs).toLocaleString()}`
+      : 'No baseline saved for this URL';
+  }
+
+  ui.saveBaselineBtn.addEventListener('click', async () => {
+    if (!currentRunMeta?.runId) { flash('Run an audit first.', true); return; }
+    const label = await promptModal('Baseline label', 'Pre-launch v1');
+    if (label === null) return;
+    try {
+      await invoke('qa_save_baseline', {
+        config: { runId: currentRunMeta.runId, url: currentRunMeta.url, label: label || null },
+      });
+      flash('Baseline saved.');
+      await refreshBaselineForCurrentUrl();
+    } catch (err) {
+      flash(`Save baseline failed: ${err}`, true);
+    }
+  });
+
+  ui.compareBtn.addEventListener('click', async () => {
+    if (!cachedBaseline) return;
+    if (!currentRunMeta?.runId) { flash('Run an audit first.', true); return; }
+    if (compareMode) {
+      compareMode = false;
+      ui.compareBtn.classList.remove('is-active');
+      ui.diffSummary.hidden = true;
+      // Re-render the standard grid from currentRunMeta.
+      prepareGrid(currentRunMeta.viewportIds, currentRunMeta.engines);
+      for (const r of currentRunMeta.results) {
+        const cell = cellMap.get(`${r.engine}__${r.viewport}`);
+        if (!cell) continue;
+        cell.classList.add('is-loaded');
+        cell.dataset.path = r.path;
+        cell.innerHTML = `
+          <img class="rt-qa-results__img" src="${escapeAttr(convertFileSrc(r.path))}" alt="${escapeAttr(`${r.engine} · ${r.viewport}`)}" loading="lazy">
+          <div class="rt-qa-results__cell-label">${escapeHtml(r.engine)} · ${r.width}×${r.height}</div>
+        `;
+      }
+      return;
+    }
+    try {
+      diffResults.clear();
+      ui.compareBtn.classList.add('is-active');
+      compareMode = true;
+      renderDiffShell();
+      await invoke('qa_run_diff', {
+        config: { runId: currentRunMeta.runId, baselineId: cachedBaseline.id },
+      });
+    } catch (err) {
+      flash(`Run diff failed: ${err}`, true);
+      compareMode = false;
+      ui.compareBtn.classList.remove('is-active');
+    }
+  });
+
+  function renderDiffShell() {
+    if (!currentRunMeta) return;
+    const allDevs = new Map(allDevices().map((d) => [d.id, d]));
+    const rows = [];
+    for (const eng of currentRunMeta.engines) {
+      for (const vid of currentRunMeta.viewportIds) {
+        const dev = allDevs.get(vid);
+        const label = dev
+          ? `${escapeHtml(eng)} · ${escapeHtml(dev.name)}<span class="rt-qa-results__dim">${dev.w}×${dev.h}</span>`
+          : `${escapeHtml(eng)} · ${escapeHtml(vid)}`;
+        rows.push(`
+          <div class="rt-qa-diff__row" data-engine="${escapeAttr(eng)}" data-vid="${escapeAttr(vid)}">
+            <div class="rt-qa-results__rowlabel">${label}</div>
+            <div class="rt-qa-diff__cell rt-qa-diff__cell--baseline"><div class="rt-qa-results__placeholder"><span class="rt-qa-spinner" aria-hidden="true"></span></div><div class="rt-qa-results__cell-label">Baseline</div></div>
+            <div class="rt-qa-diff__cell rt-qa-diff__cell--current"><div class="rt-qa-results__placeholder"><span class="rt-qa-spinner" aria-hidden="true"></span></div><div class="rt-qa-results__cell-label">Current</div></div>
+            <div class="rt-qa-diff__cell rt-qa-diff__cell--diff"><div class="rt-qa-results__placeholder"><span class="rt-qa-spinner" aria-hidden="true"></span></div><div class="rt-qa-results__cell-label">Diff</div></div>
+          </div>
+        `);
+      }
+    }
+    ui.results.innerHTML = `<div class="rt-qa-diff">${rows.join('')}</div>`;
+  }
+
+  function diffStatusFor(pct) {
+    if (pct < 0.1) return { cls: 'is-pass',   label: 'pass' };
+    if (pct <= 2)  return { cls: 'is-review', label: 'review' };
+    return { cls: 'is-regression', label: 'regression' };
+  }
+
+  function fillDiffRow(engine, vid) {
+    const row = ui.results.querySelector(`.rt-qa-diff__row[data-engine="${CSS.escape(engine)}"][data-vid="${CSS.escape(vid)}"]`);
+    if (!row) return;
+    const result = diffResults.get(`${engine}__${vid}`);
+    const currResult = currentRunMeta?.results.find((r) => r.engine === engine && r.viewport === vid);
+    const baselineCell = row.querySelector('.rt-qa-diff__cell--baseline');
+    const currentCell = row.querySelector('.rt-qa-diff__cell--current');
+    const diffCell = row.querySelector('.rt-qa-diff__cell--diff');
+    if (result?.baselinePath) {
+      baselineCell.innerHTML = `
+        <img class="rt-qa-results__img" src="${escapeAttr(convertFileSrc(result.baselinePath))}" alt="baseline">
+        <div class="rt-qa-results__cell-label">Baseline</div>`;
+    }
+    if (currResult) {
+      currentCell.innerHTML = `
+        <img class="rt-qa-results__img" src="${escapeAttr(convertFileSrc(currResult.path))}" alt="current">
+        <div class="rt-qa-results__cell-label">Current</div>`;
+    }
+    if (result?.diffPath) {
+      const status = diffStatusFor(result.mismatchPercentage);
+      diffCell.innerHTML = `
+        <img class="rt-qa-results__img" src="${escapeAttr(convertFileSrc(result.diffPath))}" alt="diff">
+        <div class="rt-qa-results__cell-label">
+          Diff
+          <span class="rt-qa-diff__badge ${status.cls}">${result.mismatchPercentage.toFixed(2)}% — ${status.label}</span>
+        </div>`;
+    }
+  }
+
+  function renderDiffSummary() {
+    let pass = 0, review = 0, regression = 0;
+    for (const r of diffResults.values()) {
+      const s = diffStatusFor(r.mismatchPercentage);
+      if (s.label === 'pass') pass++;
+      else if (s.label === 'review') review++;
+      else regression++;
+    }
+    ui.diffSummary.hidden = false;
+    ui.diffSummary.innerHTML = `
+      <span class="rt-qa-diff__sum-pass">${pass} passed</span>
+      <span class="rt-qa-diff__sum-review">${review} need review</span>
+      <span class="rt-qa-diff__sum-regression">${regression} regression${regression === 1 ? '' : 's'}</span>`;
+  }
+
+  listen('qa-diff-result', (e) => {
+    if (!compareMode) return;
+    const r = e.payload || {};
+    diffResults.set(`${r.engine}__${r.viewport}`, r);
+    fillDiffRow(r.engine, r.viewport);
+    renderDiffSummary();
+  });
+  listen('qa-diff-warning', (e) => console.warn('[qa-diff]', e.payload?.message));
+  listen('qa-diff-error', (e) => {
+    if (!compareMode) return;
+    const { engine, viewport, message } = e.payload || {};
+    const row = ui.results.querySelector(`.rt-qa-diff__row[data-engine="${CSS.escape(engine)}"][data-vid="${CSS.escape(viewport)}"]`);
+    if (row) {
+      row.querySelector('.rt-qa-diff__cell--diff').innerHTML = `
+        <div class="rt-qa-results__error">${icon('circle-alert', 18)}<span>${escapeHtml(message || 'Diff failed')}</span></div>
+        <div class="rt-qa-results__cell-label">Diff error</div>`;
+    }
+  });
+  listen('qa-diff-finished', () => {
+    flash('Diff complete.');
+  });
+
+  // Refresh baseline whenever the URL changes (we don't get a Tauri
+  // event for that — main.js should call this via the api, but here
+  // we just refresh whenever the current run URL changes too).
+  refreshBaselineForCurrentUrl();
+
   // Initial setup probe so the CTA reflects reality without making the
   // user click "Run" first to discover Playwright is missing.
   refreshSetup();
 
   return {
-    onActivate: () => { /* no-op for now; kept for parity if we add lazy init later */ },
+    onActivate: () => { refreshBaselineForCurrentUrl(); },
     refreshSetup,
+    refreshBaseline: refreshBaselineForCurrentUrl,
   };
 }
 
@@ -465,9 +635,13 @@ function buildLayout(container, devices) {
           <span>Full page</span>
         </label>
         <div class="rt-qa-controls__spacer"></div>
+        <button class="rt-toolbar__btn js-rt-qa-save-baseline" title="Save the latest run as a baseline for visual diffing">Save baseline</button>
+        <button class="rt-toolbar__btn js-rt-qa-compare" title="Compare current run to the saved baseline" disabled>Compare to baseline</button>
         <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-qa-reveal" title="Reveal latest run in Finder" aria-label="Reveal in Finder">${icon('external-link', 14)}</button>
         <button class="rt-toolbar__btn rt-toolbar__btn--primary js-rt-qa-run">${icon('play-circle', 14)}<span>Run audit</span></button>
       </div>
+
+      <div class="rt-qa-diff__summary js-rt-qa-diff-summary" hidden></div>
 
       <div class="rt-qa-controls__custom js-rt-qa-custom" hidden>
         ${deviceRows}
@@ -510,6 +684,9 @@ function buildLayout(container, devices) {
   return {
     runBtn: container.querySelector('.js-rt-qa-run'),
     revealBtn: container.querySelector('.js-rt-qa-reveal'),
+    saveBaselineBtn: container.querySelector('.js-rt-qa-save-baseline'),
+    compareBtn: container.querySelector('.js-rt-qa-compare'),
+    diffSummary: container.querySelector('.js-rt-qa-diff-summary'),
     fullPageInput: container.querySelector('.js-rt-qa-fullpage'),
     engineChips: [...container.querySelectorAll('.js-rt-qa-engines .rt-qa-controls__chip')],
     presetChips: [...container.querySelectorAll('.js-rt-qa-presets .rt-qa-controls__chip')],

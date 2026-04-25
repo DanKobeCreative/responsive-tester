@@ -3149,3 +3149,84 @@ details[open] .rt-qa-section__chev {
   border: 1px solid var(--rt-border);
   border-radius: 14px;
 }
+
+/* ── Visual diff (Layer 4) ──────────────────────────────────────── */
+.rt-qa-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rt-qa-diff__row {
+  display: grid;
+  grid-template-columns: 200px repeat(3, minmax(180px, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.rt-qa-diff__cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-border);
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 140px;
+}
+
+.rt-qa-diff__cell--diff {
+  background: color-mix(in srgb, var(--rt-bg) 40%, var(--rt-surface));
+}
+
+.rt-qa-diff__badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.rt-qa-diff__badge.is-pass {
+  background: color-mix(in srgb, var(--rt-ok) 15%, var(--rt-surface));
+  color: var(--rt-ok);
+}
+
+.rt-qa-diff__badge.is-review {
+  background: color-mix(in srgb, var(--rt-warn) 18%, var(--rt-surface));
+  color: var(--rt-warn);
+}
+
+.rt-qa-diff__badge.is-regression {
+  background: color-mix(in srgb, var(--rt-danger) 18%, var(--rt-surface));
+  color: var(--rt-danger);
+}
+
+.rt-qa-diff__summary {
+  display: flex;
+  gap: 16px;
+  padding: 8px 14px;
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-border);
+  border-radius: 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rt-qa-diff__sum-pass { color: var(--rt-ok); }
+.rt-qa-diff__sum-review { color: var(--rt-warn); }
+.rt-qa-diff__sum-regression { color: var(--rt-danger); }
+
+.js-rt-qa-compare.is-active {
+  background: var(--rt-accent);
+  color: #fff;
+  border-color: var(--rt-accent);
+}
+
+@media (max-width: 900px) {
+  .rt-qa-diff__row {
+    grid-template-columns: 1fr;
+  }
+}

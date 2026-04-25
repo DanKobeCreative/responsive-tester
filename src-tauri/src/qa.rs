@@ -841,3 +841,280 @@ fn shell_quote_str(s: &str) -> String {
     let escaped = s.replace('\'', "'\\''");
     format!("'{}'", escaped)
 }
+
+// ── Baselines + visual diff (Layer 4) ──────────────────────────────────
+
+fn baselines_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("qa-baselines");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+#[derive(Deserialize)]
+pub struct SaveBaselineConfig {
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    pub url: String,
+    pub label: Option<String>,
+}
+
+#[tauri::command]
+pub fn qa_save_baseline(
+    app: AppHandle,
+    config: SaveBaselineConfig,
+) -> Result<String, String> {
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let src = app_data.join("qa-runs").join(&config.run_id);
+    if !src.exists() {
+        return Err(format!("Run not found: {}", config.run_id));
+    }
+    let url_slug = sanitise_slug(&config.url);
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+    let id = format!("{}_{}", url_slug, ts);
+    let dst = baselines_root(&app)?.join(&id);
+    fs::create_dir_all(&dst).map_err(|e| e.to_string())?;
+    copy_dir_recursive(&src, &dst)?;
+
+    let manifest_src = src.join("manifest.json");
+    let manifest_value: serde_json::Value = if manifest_src.exists() {
+        fs::read_to_string(&manifest_src)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    let meta = serde_json::json!({
+        "id": id,
+        "url": config.url,
+        "urlSlug": url_slug,
+        "label": config.label,
+        "createdMs": ts,
+        "viewports": manifest_value.get("viewports").cloned().unwrap_or(serde_json::json!([])),
+        "engines": manifest_value.get("engines").cloned().unwrap_or(serde_json::json!([])),
+        "masks": [],
+    });
+    fs::write(dst.join("baseline-meta.json"), serde_json::to_string_pretty(&meta).unwrap())
+        .map_err(|e| e.to_string())?;
+
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn qa_list_baselines(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    let root = baselines_root(&app)?;
+    let mut out = Vec::new();
+    let entries = fs::read_dir(&root).map_err(|e| e.to_string())?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let meta_path = path.join("baseline-meta.json");
+        if !meta_path.exists() {
+            continue;
+        }
+        if let Ok(txt) = fs::read_to_string(&meta_path) {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&txt) {
+                out.push(value);
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        b.get("createdMs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            .cmp(&a.get("createdMs").and_then(|v| v.as_u64()).unwrap_or(0))
+    });
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn qa_delete_baseline(app: AppHandle, baseline_id: String) -> Result<(), String> {
+    let dir = baselines_root(&app)?.join(sanitise_slug(&baseline_id));
+    if dir.exists() {
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn qa_get_baseline_for_url(
+    app: AppHandle,
+    url: String,
+) -> Result<Option<serde_json::Value>, String> {
+    let url_slug = sanitise_slug(&url);
+    let baselines = qa_list_baselines(app)?;
+    Ok(baselines
+        .into_iter()
+        .find(|v| v.get("urlSlug").and_then(|s| s.as_str()) == Some(url_slug.as_str())))
+}
+
+#[tauri::command]
+pub fn qa_save_baseline_masks(
+    app: AppHandle,
+    baseline_id: String,
+    masks: serde_json::Value,
+) -> Result<(), String> {
+    let dir = baselines_root(&app)?.join(sanitise_slug(&baseline_id));
+    let meta_path = dir.join("baseline-meta.json");
+    if !meta_path.exists() {
+        return Err("Baseline not found.".into());
+    }
+    let txt = fs::read_to_string(&meta_path).map_err(|e| e.to_string())?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(&txt).map_err(|e| e.to_string())?;
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("masks".to_string(), masks);
+    }
+    fs::write(&meta_path, serde_json::to_string_pretty(&value).unwrap())
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Deserialize)]
+pub struct RunDiffConfig {
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    #[serde(rename = "baselineId")]
+    pub baseline_id: String,
+    #[serde(default)]
+    pub masks: serde_json::Value,
+    #[serde(default = "default_diff_threshold")]
+    pub threshold: f32,
+}
+
+fn default_diff_threshold() -> f32 {
+    0.1
+}
+
+#[tauri::command]
+pub fn qa_run_diff(
+    app: AppHandle,
+    state: State<'_, QaState>,
+    config: RunDiffConfig,
+) -> Result<String, String> {
+    {
+        let guard = state.child.lock().map_err(|e| e.to_string())?;
+        if guard.is_some() {
+            return Err("An audit / diff is already running.".into());
+        }
+    }
+
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let baseline_dir = baselines_root(&app)?.join(sanitise_slug(&config.baseline_id));
+    let current_dir = app_data.join("qa-runs").join(&config.run_id);
+    if !baseline_dir.exists() {
+        return Err(format!("Baseline not found: {}", config.baseline_id));
+    }
+    if !current_dir.exists() {
+        return Err(format!("Run not found: {}", config.run_id));
+    }
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+    let out_dir = app_data.join("qa-diffs").join(format!("{}", ts));
+    fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+    let diff_id = format!("{}", ts);
+
+    let audit_dir = resolve_audit_dir(&app)?;
+    if !audit_dir.join("node_modules").exists() {
+        return Err("Audit deps not installed. Run setup first.".into());
+    }
+
+    let sidecar_config = serde_json::json!({
+        "baselineDir": baseline_dir.display().to_string(),
+        "currentDir": current_dir.display().to_string(),
+        "outputDir": out_dir.display().to_string(),
+        "masks": config.masks,
+        "threshold": config.threshold,
+    });
+
+    let script_path = audit_dir.join("diff-runner.js");
+    let cmd_string = format!(
+        "cd {} && node {}",
+        shell_quote(&audit_dir),
+        shell_quote(&script_path),
+    );
+
+    let mut child = Command::new("/bin/sh")
+        .args(["-lc", &cmd_string])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    if let Some(mut stdin_pipe) = child.stdin.take() {
+        let payload = sidecar_config.to_string();
+        stdin_pipe
+            .write_all(payload.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+
+    let stdout = child.stdout.take().ok_or("Could not capture stdout.")?;
+    let stderr = child.stderr.take().ok_or("Could not capture stderr.")?;
+
+    {
+        let app_for_stderr = app.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                if line.is_empty() {
+                    continue;
+                }
+                let _ = app_for_stderr
+                    .emit("qa-diff-stderr", serde_json::json!({ "line": line }));
+            }
+        });
+    }
+
+    let app_for_events = app.clone();
+    let out_dir_for_events = out_dir.clone();
+    let diff_id_for_events = diff_id.clone();
+    thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if line.is_empty() {
+                continue;
+            }
+            let payload: serde_json::Value = serde_json::from_str(&line)
+                .unwrap_or_else(|_| serde_json::json!({ "type": "log", "raw": line }));
+            let event_type = payload
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("log");
+            let _ = app_for_events.emit(&format!("qa-{}", event_type), &payload);
+        }
+        let qa_state = app_for_events.state::<QaState>();
+        if let Ok(mut guard) = qa_state.child.lock() {
+            if let Some(mut c) = guard.take() {
+                let _ = c.wait();
+            }
+        }
+        let _ = app_for_events.emit(
+            "qa-diff-finished",
+            serde_json::json!({
+                "diffId": diff_id_for_events,
+                "outputDir": out_dir_for_events.display().to_string(),
+            }),
+        );
+    });
+
+    {
+        let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+        *guard = Some(child);
+    }
+
+    Ok(diff_id)
+}
