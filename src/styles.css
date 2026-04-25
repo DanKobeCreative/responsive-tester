@@ -3468,3 +3468,64 @@ details[open] .rt-qa-section__chev {
   display: flex;
   justify-content: flex-end;
 }
+
+/* ── Environment switcher (Layer 6) ─────────────────────────────── */
+.rt-toolbar__envs {
+  display: inline-flex;
+  background: var(--rt-bg);
+  border: 1px solid var(--rt-border);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.rt-toolbar__envs .rt-toolbar__chip {
+  padding: 4px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rt-qa-controls__more {
+  margin-left: auto;
+}
+
+.rt-qa-controls__more summary {
+  cursor: pointer;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--rt-text-dim);
+  background: var(--rt-bg);
+  border: 1px solid var(--rt-border);
+  border-radius: 8px;
+  list-style: none;
+}
+
+.rt-qa-controls__more summary::-webkit-details-marker { display: none; }
+
+.rt-qa-controls__more[open] summary {
+  background: var(--rt-surface);
+  border-color: var(--rt-accent);
+}
+
+.rt-qa-controls__more-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-border);
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+.rt-qa-results__console-badge {
+  margin-left: 6px;
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--rt-warn) 18%, var(--rt-surface));
+  color: var(--rt-warn);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
