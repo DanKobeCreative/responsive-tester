@@ -17,6 +17,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -288,11 +289,16 @@ pub fn qa_run_screenshot_audit(
         shell_quote(&script_path),
     );
 
+    // Spawn in a new process group so that on cancel we can `killpg` the
+    // entire tree (sh → node → playwright-browser-bin → its renderer /
+    // gpu / network children). A plain `child.kill()` SIGKILLs the shell
+    // only and orphans every browser process beneath it.
     let mut child = Command::new("/bin/sh")
         .args(["-lc", &cmd_string])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .spawn()
         .map_err(|e| e.to_string())?;
 
@@ -373,6 +379,16 @@ pub fn qa_run_screenshot_audit(
 pub fn qa_cancel_audit(app: AppHandle, state: State<'_, QaState>) -> Result<(), String> {
     let mut guard = state.child.lock().map_err(|e| e.to_string())?;
     if let Some(mut child) = guard.take() {
+        // Kill the whole process group, not just the shell. Without this
+        // the Node + Playwright browser processes survive as orphans.
+        // The PGID equals the spawned shell's PID because we set
+        // `process_group(0)` at spawn time.
+        let pid = child.id() as i32;
+        unsafe {
+            libc::killpg(pid, libc::SIGKILL);
+        }
+        // Belt-and-braces: also SIGKILL the direct child in case the
+        // group kill missed it for any reason, then reap.
         let _ = child.kill();
         let _ = child.wait();
         let _ = app.emit("qa-cancelled", serde_json::json!({}));

@@ -37,4 +37,7 @@ tauri-plugin-localhost = "2"
 portpicker = "0.1"
 # Save / open dialogs for QA audit exports.
 tauri-plugin-dialog = "2"
+# killpg(pgid, SIGKILL) so cancelling a QA audit takes down the entire
+# /bin/sh → node → playwright-browser process tree, not just the shell.
+libc = "0.2"
 
