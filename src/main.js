@@ -12,6 +12,7 @@ import {
 import { openPanel, clearPanelCache } from './features/panels.js';
 import { wireContrastWidget } from './features/contrast.js';
 import { icon } from './features/icons.js';
+import { initCrossBrowser } from './features/qa-audit.js';
 
 // ── Device matrix (April 2026) ──────────────────────────────────────
 const DEFAULT_DEVICES = [
@@ -66,6 +67,9 @@ const defaults = () => ({
   videoDuration: 15,
   toolbarsHidden: false,
   sidebarHidden: false,
+  // Active workspace mode: 'preview' (the iframe grid) or 'cross-browser'
+  // (Playwright-driven multi-engine screenshot audit — Layer 2).
+  mode: 'preview',
   // When true, every non-desktop device frame shows a simulated OS
   // browser chrome (iOS Safari bottom URL bar on iPhones, iPadOS top
   // tab bar on iPads, Chrome top URL bar on Android). The iframe
@@ -1501,6 +1505,33 @@ async function applyCliUrl() {
   } catch { /* not available outside tauri */ }
 }
 
+// ── Mode switching (Preview vs Cross-Browser) ───────────────────────
+// Both views share the URL input and load button in the primary toolbar.
+// The secondary toolbar carries Preview-only controls (layout, browser
+// chrome, grid overlay, etc.) so it hides when Cross-Browser is active.
+const modeButtons = document.querySelectorAll('.js-rt-mode');
+const previewBody = document.querySelector('.js-rt-body-preview');
+const crossBrowserBody = document.querySelector('.js-rt-body-cross-browser');
+const secondaryToolbar = document.querySelector('.rt-toolbar--secondary');
+let crossBrowserApi = null;
+
+function setMode(next) {
+  if (next !== 'preview' && next !== 'cross-browser') return;
+  state.mode = next;
+  saveState();
+  modeButtons.forEach((b) => {
+    const active = b.dataset.mode === next;
+    b.classList.toggle('is-active', active);
+    b.setAttribute('aria-selected', String(active));
+  });
+  previewBody.hidden = next !== 'preview';
+  crossBrowserBody.hidden = next !== 'cross-browser';
+  if (secondaryToolbar) secondaryToolbar.hidden = next !== 'preview';
+  if (next === 'cross-browser' && crossBrowserApi?.onActivate) crossBrowserApi.onActivate();
+}
+
+modeButtons.forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+
 // ── Init ────────────────────────────────────────────────────────────
 function hydrateIcons(root = document) {
   root.querySelectorAll('[data-icon]').forEach((el) => {
@@ -1540,6 +1571,17 @@ function init() {
 
   wireContrastWidget(document);
   renderWorkspaces();
+
+  // Mount the cross-browser tab. The container exists in index.html but is
+  // hidden until setMode('cross-browser') reveals it. Building eagerly so
+  // the listeners attach once and survive tab switches.
+  crossBrowserApi = initCrossBrowser({
+    container: crossBrowserBody,
+    getCurrentUrl: () => state.url,
+    getAuth: (host) => state.auth[host] ? { username: state.auth[host].user, password: state.auth[host].pass } : null,
+    allDevices,
+  });
+  setMode(state.mode || 'preview');
 
   applyCliUrl();
 }

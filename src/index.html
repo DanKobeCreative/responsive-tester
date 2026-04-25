@@ -9,6 +9,10 @@
   </head>
   <body>
     <div class="rt-app">
+      <nav class="rt-modes" role="tablist" aria-label="Workspace mode">
+        <button class="rt-modes__tab is-active js-rt-mode" data-mode="preview" role="tab" aria-selected="true">Preview</button>
+        <button class="rt-modes__tab js-rt-mode" data-mode="cross-browser" role="tab" aria-selected="false">Cross-Browser</button>
+      </nav>
       <div class="rt-toolbar">
         <input
           type="text"
@@ -103,10 +107,12 @@
         <button class="rt-toolbar__btn js-rt-panel-open" data-tab="breakpoints" title="Detect CSS breakpoints">Breakpoints</button>
       </div>
 
-      <div class="rt-body">
+      <div class="rt-body js-rt-body-preview">
         <aside class="rt-sidebar js-rt-sidebar"></aside>
         <div class="rt-grid js-rt-grid"></div>
       </div>
+
+      <div class="rt-body rt-body--qa js-rt-body-cross-browser" hidden></div>
     </div>
 
     <!-- Load progress toast (shows while iframes are queueing) -->
