@@ -47,6 +47,79 @@ export function isoSlug(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}${pad(date.getMinutes())}`;
 }
 
+// In-app prompt + confirm. window.prompt() / window.confirm() don't work
+// in Tauri 2's WKWebView — the embedding app has to implement the
+// WKUIDelegate methods (runJavaScriptTextInputPanelWithPrompt: etc.),
+// and Tauri intentionally doesn't. Native calls return null / false
+// silently, which made the bookmark add a silent no-op since v0.4.0.
+// These two helpers replicate the API as Promises so callers can await.
+
+let modalRoot = null;
+
+function ensureModalRoot() {
+  if (modalRoot) return modalRoot;
+  modalRoot = document.createElement('div');
+  modalRoot.className = 'rt-modal-root';
+  document.body.appendChild(modalRoot);
+  return modalRoot;
+}
+
+function buildModal({ title, message, defaultValue, mode }) {
+  const root = ensureModalRoot();
+  const overlay = document.createElement('div');
+  overlay.className = 'rt-modal';
+  const isPrompt = mode === 'prompt';
+  overlay.innerHTML = `
+    <div class="rt-modal__sheet">
+      ${title ? `<div class="rt-modal__title">${escapeHtml(title)}</div>` : ''}
+      ${message ? `<div class="rt-modal__msg">${escapeHtml(message)}</div>` : ''}
+      ${isPrompt ? `<input type="text" class="rt-modal__input" value="${escapeAttr(defaultValue ?? '')}">` : ''}
+      <div class="rt-modal__actions">
+        <button class="rt-toolbar__btn js-cancel">Cancel</button>
+        <button class="rt-toolbar__btn rt-toolbar__btn--primary js-ok">${isPrompt ? 'OK' : 'Confirm'}</button>
+      </div>
+    </div>`;
+  root.appendChild(overlay);
+  return overlay;
+}
+
+export function promptModal(title, defaultValue = '') {
+  return new Promise((resolve) => {
+    const overlay = buildModal({ title, defaultValue, mode: 'prompt' });
+    const input = overlay.querySelector('.rt-modal__input');
+    const ok = overlay.querySelector('.js-ok');
+    const cancel = overlay.querySelector('.js-cancel');
+    const cleanup = (val) => { overlay.remove(); document.removeEventListener('keydown', onKey); resolve(val); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
+      if (e.key === 'Enter') { e.preventDefault(); cleanup(input.value); }
+    };
+    document.addEventListener('keydown', onKey);
+    ok.addEventListener('click', () => cleanup(input.value));
+    cancel.addEventListener('click', () => cleanup(null));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(null); });
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+  });
+}
+
+export function confirmModal(message, title = 'Confirm') {
+  return new Promise((resolve) => {
+    const overlay = buildModal({ title, message, mode: 'confirm' });
+    const ok = overlay.querySelector('.js-ok');
+    const cancel = overlay.querySelector('.js-cancel');
+    const cleanup = (val) => { overlay.remove(); document.removeEventListener('keydown', onKey); resolve(val); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); cleanup(false); }
+      if (e.key === 'Enter') { e.preventDefault(); cleanup(true); }
+    };
+    document.addEventListener('keydown', onKey);
+    ok.addEventListener('click', () => cleanup(true));
+    cancel.addEventListener('click', () => cleanup(false));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
+    setTimeout(() => ok.focus(), 0);
+  });
+}
+
 // Simple concurrency-limited queue. Used to stagger iframe loads so that
 // hitting Load with 20 devices doesn't fire 20 concurrent requests at a
 // rate-limited staging server.

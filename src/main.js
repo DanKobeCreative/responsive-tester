@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 import {
   escapeHtml, escapeAttr, slug, flash, normaliseUrl, hostOf, isoSlug, LoadQueue,
+  promptModal,
 } from './features/utils.js';
 import {
   injectFilterDefs, applyColorBlindFilter, renderGridOverlay,
@@ -910,14 +911,18 @@ function renderRecent() {
 }
 
 // ── Bookmarks ───────────────────────────────────────────────────────
-function addBookmark() {
+async function addBookmark() {
   const url = normaliseUrl(urlInput.value);
   if (!url) return;
-  const label = prompt('Bookmark label:', hostOf(url) || url);
+  const label = await promptModal('Bookmark label', hostOf(url) || url);
   if (!label) return;
   state.bookmarks.push({ label, url });
   saveState();
   buildSidebar();
+  flash(`Bookmarked: ${label}`);
+  // The sidebar (where bookmarks live) is hidden in non-Preview modes.
+  // Snap back so the user actually sees the new entry land.
+  if (state.mode !== 'preview') setMode('preview');
 }
 
 // ── Settings panel ──────────────────────────────────────────────────
