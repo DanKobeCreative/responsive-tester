@@ -9,7 +9,7 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-import { escapeHtml, escapeAttr, flash, hostOf } from './utils.js';
+import { escapeHtml, escapeAttr, flash, hostOf, promptModal } from './utils.js';
 import { icon } from './icons.js';
 
 const ENGINES = [
@@ -443,7 +443,8 @@ export function initCrossBrowser({ container, getCurrentUrl, getAuth, allDevices
 
   ui.saveBaselineBtn.addEventListener('click', async () => {
     if (!currentRunMeta?.runId) { flash('Run an audit first.', true); return; }
-    const label = window.prompt('Optional label for this baseline (e.g. "Pre-launch v1"):', '');
+    const label = await promptModal('Baseline label', 'Pre-launch v1');
+    if (label === null) return;
     try {
       await invoke('qa_save_baseline', {
         config: { runId: currentRunMeta.runId, url: currentRunMeta.url, label: label || null },
