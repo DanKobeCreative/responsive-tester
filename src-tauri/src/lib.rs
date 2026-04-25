@@ -9,9 +9,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Manager, State};
 
-use qa::QaState;
+use qa::{LiveSessions, QaState};
 
 
 struct CliState {
@@ -323,6 +323,7 @@ pub fn run() {
             path: None,
         }))
         .manage(QaState::default())
+        .manage(LiveSessions::default())
         .invoke_handler(tauri::generate_handler![
             get_cli_url,
             screenshot_batch_start,
@@ -339,6 +340,16 @@ pub fn run() {
             qa::qa_install_audit_deps,
             qa::qa_run_screenshot_audit,
             qa::qa_cancel_audit,
+            qa::qa_launch_session,
+            qa::qa_navigate_session,
+            qa::qa_close_session,
+            qa::qa_close_all_sessions,
+            qa::qa_list_sessions,
+            qa::qa_save_checklist,
+            qa::qa_load_checklist,
+            qa::qa_list_checklists,
+            qa::qa_write_text,
+            qa::qa_sweep_orphans,
         ])
         .setup(move |app| {
             use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -355,14 +366,47 @@ pub fn run() {
             } else {
                 app_url.parse().expect("invalid localhost url")
             };
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(main_url))
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(main_url))
                 .title("Responsive Tester")
                 .inner_size(1400.0, 900.0)
                 .min_inner_size(900.0, 600.0)
                 .resizable(true)
                 .build()?;
+
+            // Sweep any leftover live-session / cross-browser children
+            // from a previous force-quit so they don't accumulate as
+            // hidden orphans across launches.
+            match qa::qa_sweep_orphans() {
+                Ok(n) if n > 0 => eprintln!("qa: cleaned up {} orphan QA child process(es)", n),
+                Ok(_) => {}
+                Err(e) => eprintln!("qa: orphan sweep failed: {}", e),
+            }
+
+            // Cmd+Q / window close → kill every live session before the
+            // window goes away. Fired by Tauri before the window actually
+            // closes, so the kills land cleanly.
+            let app_for_close = app.handle().clone();
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    let _ = qa::qa_close_all_sessions(
+                        app_for_close.clone(),
+                        app_for_close.state::<LiveSessions>(),
+                    );
+                }
+            });
+
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Backstop for paths that bypass the window-event hook (the
+            // platform exit, an unexpected app-process shutdown, etc.).
+            if let tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. } = event {
+                let _ = qa::qa_close_all_sessions(
+                    app.clone(),
+                    app.state::<LiveSessions>(),
+                );
+            }
+        });
 }

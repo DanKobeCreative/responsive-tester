@@ -14,6 +14,7 @@ import { openPanel, clearPanelCache } from './features/panels.js';
 import { wireContrastWidget } from './features/contrast.js';
 import { icon } from './features/icons.js';
 import { initCrossBrowser } from './features/qa-audit.js';
+import { initQaSession } from './features/qa-session.js';
 
 // ── Device matrix (April 2026) ──────────────────────────────────────
 const DEFAULT_DEVICES = [
@@ -68,9 +69,20 @@ const defaults = () => ({
   videoDuration: 15,
   toolbarsHidden: false,
   sidebarHidden: false,
-  // Active workspace mode: 'preview' (the iframe grid) or 'cross-browser'
-  // (Playwright-driven multi-engine screenshot audit — Layer 2).
+  // Active workspace mode: 'preview' (the iframe grid) | 'cross-browser'
+  // (Playwright-driven multi-engine screenshot audit — Layer 2) |
+  // 'qa-session' (live headed-browser windows + per-URL checklist —
+  // Layer 3).
   mode: 'preview',
+  // Layer 3: last-used engine + viewport for live QA sessions, plus the
+  // url-slug of the most recently opened checklist so we can re-open it
+  // on next launch. Checklists themselves live on disk under
+  // {app_data_dir}/qa-checklists/, not in localStorage.
+  qaSession: {
+    engine: 'chromium',
+    viewport: 'iphone-16',
+    activeUrlSlug: null,
+  },
   // When true, every non-desktop device frame shows a simulated OS
   // browser chrome (iOS Safari bottom URL bar on iPhones, iPadOS top
   // tab bar on iPads, Chrome top URL bar on Android). The iframe
@@ -904,6 +916,10 @@ function loadUrl(opts = {}) {
   // Refresh simulated browser-chrome labels so the new host renders in
   // every device's URL bar overlay.
   applyScale();
+
+  // Layer 3: any live QA session windows should follow the URL change
+  // so the user's manual QA pass stays in sync with the toolbar input.
+  if (qaSessionApi?.broadcastUrl) qaSessionApi.broadcastUrl(url);
 }
 
 function renderRecent() {
@@ -1510,18 +1526,23 @@ async function applyCliUrl() {
   } catch { /* not available outside tauri */ }
 }
 
-// ── Mode switching (Preview vs Cross-Browser) ───────────────────────
-// Both views share the URL input and load button in the primary toolbar.
-// The secondary toolbar carries Preview-only controls (layout, browser
-// chrome, grid overlay, etc.) so it hides when Cross-Browser is active.
+// ── Mode switching (Preview / Cross-Browser / QA Session) ───────────
+// All three modes share the URL input and Load button in the primary
+// toolbar. The secondary toolbar carries Preview-only controls (layout,
+// browser chrome, grid overlay, etc.) so it hides whenever a non-Preview
+// mode is active.
 const modeButtons = document.querySelectorAll('.js-rt-mode');
 const previewBody = document.querySelector('.js-rt-body-preview');
 const crossBrowserBody = document.querySelector('.js-rt-body-cross-browser');
+const qaSessionBody = document.querySelector('.js-rt-body-qa-session');
 const secondaryToolbar = document.querySelector('.rt-toolbar--secondary');
 let crossBrowserApi = null;
+let qaSessionApi = null;
+
+const MODES = new Set(['preview', 'cross-browser', 'qa-session']);
 
 function setMode(next) {
-  if (next !== 'preview' && next !== 'cross-browser') return;
+  if (!MODES.has(next)) return;
   state.mode = next;
   saveState();
   modeButtons.forEach((b) => {
@@ -1531,8 +1552,10 @@ function setMode(next) {
   });
   previewBody.hidden = next !== 'preview';
   crossBrowserBody.hidden = next !== 'cross-browser';
+  qaSessionBody.hidden = next !== 'qa-session';
   if (secondaryToolbar) secondaryToolbar.hidden = next !== 'preview';
   if (next === 'cross-browser' && crossBrowserApi?.onActivate) crossBrowserApi.onActivate();
+  if (next === 'qa-session' && qaSessionApi?.refreshSessions) qaSessionApi.refreshSessions();
 }
 
 modeButtons.forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
@@ -1586,6 +1609,18 @@ function init() {
     getAuth: (host) => state.auth[host] ? { username: state.auth[host].user, password: state.auth[host].pass } : null,
     allDevices,
   });
+
+  // Layer 3 — QA Session tab. Same eager-mount pattern.
+  qaSessionApi = initQaSession({
+    container: qaSessionBody,
+    getCurrentUrl: () => state.url,
+    getAuth: (host) => state.auth[host] ? { username: state.auth[host].user, password: state.auth[host].pass } : null,
+    allDevices,
+    setMode,
+    getQaSessionState: () => state.qaSession,
+    setQaSessionState: (next) => { state.qaSession = { ...state.qaSession, ...next }; saveState(); },
+  });
+
   setMode(state.mode || 'preview');
 
   applyCliUrl();
