@@ -187,11 +187,20 @@ pub async fn qa_install_audit_deps(app: AppHandle) -> Result<(), String> {
     fs::create_dir_all(&prod).map_err(|e| e.to_string())?;
 
     // In production builds, copy bundled scripts from the resource dir
-    // into the writable app data dir before npm install.
+    // into the writable app data dir before npm install. Tauri's bundler
+    // puts anything pulled in via a `..`-prefixed path (e.g. `../audit`
+    // from src-tauri/) under a `_up_/` subdirectory, so check that first
+    // and fall back to a flat `audit/` for future bundle layouts.
     if let Ok(resources) = app.path().resource_dir() {
-        let bundled = resources.join("audit");
-        if bundled.exists() {
-            copy_dir_recursive(&bundled, &prod)?;
+        let candidates = [
+            resources.join("_up_").join("audit"),
+            resources.join("audit"),
+        ];
+        for bundled in candidates {
+            if bundled.exists() {
+                copy_dir_recursive(&bundled, &prod)?;
+                break;
+            }
         }
     }
 

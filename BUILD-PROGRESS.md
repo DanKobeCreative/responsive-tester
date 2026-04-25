@@ -55,7 +55,7 @@ Honest accounting of what's *not* yet been verified. These are the receipts I ow
 - ✅ ~~Cross-Browser run end-to-end on a real localhost Kobe site~~ — closed `2026-04-25` via run `1777078573711`, see `✓ Verified (Step 12)` above.
 - ✅ ~~Scroll-trigger Lenis verification~~ — closed by the same run.
 - ✅ ~~Asset-protocol scope works for `$APPDATA`~~ — closed by the same run; PNGs rendered fine in the lightbox.
-- **Existing iframe preview grid still loads URLs correctly under the new lib.rs dev-mode branch.** Implicit confirmation only — Dan was on Preview before switching to Cross-Browser. Worth an explicit smoke (load URL on Preview, all 20 frames render, scale slider, single screenshot).
+- ✅ ~~Existing iframe preview grid still loads URLs correctly under the new lib.rs dev-mode branch~~ — explicit smoke closed `2026-04-25` by Dan: Preview tab shows 20 frames rendering `http://localhost:8080`, scale slider resizes fluidly, single-frame camera icon produces a screenshot on Desktop. See `✓ Verified (Step 15)` below.
 - **Production build path.** `cfg!(dev)` branch routes prod to the localhost plugin URL — *not yet* verified via `npm run tauri:build:universal` and a launch from the built `.app`. Production is the path that actually ships, so this matters.
 - **Per-host basic auth threading end-to-end.** Auth is wired through (`state.auth → getAuth → Rust → sidecar → Playwright httpCredentials`), but no live run against a Basic-auth-protected staging host has been driven yet.
 - ✅ ~~Cancel mid-run + zombie-Node check~~ — first attempt failed (orphans found); fixed in Step 14 with `process_group(0)` + `killpg`; second attempt verified clean. See `✓ Verified (Step 14)`.
