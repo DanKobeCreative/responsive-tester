@@ -13,6 +13,7 @@ import { chromium } from 'playwright';
 
 import { resolveViewports } from './lib/viewports.js';
 import { now, ensureDir, writeJson, writeText } from './lib/util.js';
+import { gotoStable } from './lib/playwright.js';
 import { buildReport } from './lib/report.js';
 
 import overflowCheck from './checks/overflow.js';
@@ -105,26 +106,6 @@ async function confirmApiRun({ url, viewports, vision, skip }) {
   rl.close();
   output.write('\n');
   return answer === 'y' || answer === 'yes';
-}
-
-async function gotoStable(page, url) {
-  // Retry twice on transient network errors — staging servers behind
-  // rate-limiters (Hetzner fail2ban) sometimes drop mid-run connections.
-  let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await page.goto(url, { waitUntil: 'load', timeout: 30000 });
-      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-      await page.evaluate(() => document.fonts?.ready).catch(() => {});
-      await page.waitForTimeout(500);
-      return;
-    } catch (e) {
-      lastErr = e;
-      if (!/ERR_CONNECTION|ERR_NETWORK|ERR_TIMED_OUT|ERR_EMPTY_RESPONSE/.test(e.message)) throw e;
-      await page.waitForTimeout(2000 * (attempt + 1));
-    }
-  }
-  throw lastErr;
 }
 
 async function run() {
