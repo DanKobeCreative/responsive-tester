@@ -1,3 +1,5 @@
+mod qa;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -8,6 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use tauri::State;
+
+use qa::QaState;
 
 
 struct CliState {
@@ -312,11 +316,13 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(CliState { url: cli_url }))
         .manage(Mutex::new(VideoState {
             proc: None,
             path: None,
         }))
+        .manage(QaState::default())
         .invoke_handler(tauri::generate_handler![
             get_cli_url,
             screenshot_batch_start,
@@ -328,6 +334,11 @@ pub fn run() {
             fetch_url_meta,
             check_links,
             open_externally,
+            qa::qa_check_setup,
+            qa::qa_resolve_audit_dir,
+            qa::qa_install_audit_deps,
+            qa::qa_run_screenshot_audit,
+            qa::qa_cancel_audit,
         ])
         .setup(move |app| {
             use tauri::{WebviewUrl, WebviewWindowBuilder};
