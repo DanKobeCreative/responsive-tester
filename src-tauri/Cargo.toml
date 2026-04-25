@@ -1,6 +1,6 @@
 [package]
 name = "responsive-tester"
-version = "0.3.0"
+version = "0.3.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -28,4 +28,11 @@ serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 futures = "0.3"
+# Serves the built frontend from http://localhost:<port> instead of the
+# default tauri:// scheme. That makes the app shell same-protocol as the
+# http://localhost:8080 sites we point it at, so WKWebView stops blocking
+# them as mixed content. This is the Tauri-sanctioned path for this need.
+tauri-plugin-localhost = "2"
+# Used to derive a free localhost port at app start.
+portpicker = "0.1"
 
