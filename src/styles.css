@@ -2238,6 +2238,17 @@ body {
   margin-top: 10px;
 }
 
+/* The author display: flex / block rules below would otherwise out-specify
+   the UA stylesheet's `[hidden] { display: none }`, so the modes and the
+   full-screen QA modals would render on top of everything regardless of
+   the hidden attribute. Restore hidden semantics explicitly. */
+.rt-body[hidden],
+.rt-body--qa[hidden],
+.rt-qa-lightbox[hidden],
+.rt-qa-setup[hidden] {
+  display: none;
+}
+
 .rt-qa {
   display: flex;
   flex-direction: column;
