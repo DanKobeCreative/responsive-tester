@@ -1,6 +1,6 @@
 [package]
 name = "responsive-tester"
-version = "0.3.1"
+version = "0.4.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
@@ -35,4 +35,9 @@ futures = "0.3"
 tauri-plugin-localhost = "2"
 # Used to derive a free localhost port at app start.
 portpicker = "0.1"
+# Save / open dialogs for QA audit exports.
+tauri-plugin-dialog = "2"
+# killpg(pgid, SIGKILL) so cancelling a QA audit takes down the entire
+# /bin/sh → node → playwright-browser process tree, not just the shell.
+libc = "0.2"
 

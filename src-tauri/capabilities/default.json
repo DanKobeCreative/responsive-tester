@@ -8,6 +8,7 @@
     "opener:default",
     "updater:default",
     "process:default",
-    "window-state:default"
+    "window-state:default",
+    "dialog:default"
   ]
 }
