@@ -3529,3 +3529,150 @@ details[open] .rt-qa-section__chev {
   font-size: 10px;
   font-weight: 600;
 }
+
+/* ── AI Test Runner (Layer 7) ───────────────────────────────────── */
+.rt-ai-test {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rt-ai-test__key {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--rt-warn) 12%, var(--rt-surface));
+  border: 1px solid var(--rt-warn);
+  border-radius: 12px;
+  color: var(--rt-text);
+  font-size: 12px;
+}
+
+.rt-ai-test__prompt {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 14px;
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-border);
+  border-radius: 12px;
+  color: var(--rt-text);
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.rt-ai-test__status {
+  font-size: 12px;
+  color: var(--rt-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.rt-ai-test__results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rt-ai-test__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rt-ai-test__step {
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.rt-ai-test__step.is-pass {
+  border-left: 3px solid var(--rt-ok);
+}
+
+.rt-ai-test__step.is-fail {
+  border-left: 3px solid var(--rt-danger);
+  background: color-mix(in srgb, var(--rt-danger) 6%, var(--rt-surface));
+}
+
+.rt-ai-test__step-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.rt-ai-test__step-n {
+  width: 20px;
+  text-align: right;
+  color: var(--rt-text-dim);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.rt-ai-test__step-desc { flex: 1; color: var(--rt-text); }
+
+.rt-ai-test__step-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.rt-ai-test__step.is-pass .rt-ai-test__step-badge { color: var(--rt-ok); }
+.rt-ai-test__step.is-fail .rt-ai-test__step-badge { color: var(--rt-danger); }
+
+.rt-ai-test__error {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--rt-danger) 10%, var(--rt-bg));
+  border-radius: 8px;
+  font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--rt-danger);
+  white-space: pre-wrap;
+}
+
+.rt-ai-test__step .rt-qa-results__img {
+  margin-top: 8px;
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: 8px;
+  border: 1px solid var(--rt-border);
+}
+
+.rt-ai-test__code-toggle {
+  background: var(--rt-surface);
+  border: 1px solid var(--rt-border);
+  border-radius: 12px;
+}
+
+.rt-ai-test__code-toggle summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--rt-text-dim);
+  list-style: none;
+}
+
+.rt-ai-test__code-toggle summary::-webkit-details-marker { display: none; }
+
+.rt-ai-test__code {
+  margin: 0;
+  padding: 14px;
+  background: var(--rt-bg);
+  border-top: 1px solid var(--rt-border);
+  font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--rt-text);
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 400px;
+  overflow-y: auto;
+}

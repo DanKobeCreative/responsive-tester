@@ -849,6 +849,181 @@ fn shell_quote_str(s: &str) -> String {
     format!("'{}'", escaped)
 }
 
+// ── AI test runner (Layer 7) ───────────────────────────────────────────
+
+#[derive(Default)]
+pub struct AiTestState {
+    pub child: Mutex<Option<Child>>,
+}
+
+#[derive(Deserialize)]
+pub struct AiTestConfig {
+    pub prompt: String,
+    pub url: String,
+    pub engine: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[tauri::command]
+pub fn qa_run_ai_test(
+    app: AppHandle,
+    state: State<'_, AiTestState>,
+    config: AiTestConfig,
+) -> Result<String, String> {
+    {
+        let guard = state.child.lock().map_err(|e| e.to_string())?;
+        if guard.is_some() {
+            return Err("An AI test is already running.".into());
+        }
+    }
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis()
+        .to_string();
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let out_dir = app_data.join("qa-ai-tests").join(&ts);
+    fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+    let audit_dir = resolve_audit_dir(&app)?;
+    if !audit_dir.join("node_modules").exists() {
+        return Err("Audit deps not installed. Run setup first.".into());
+    }
+
+    // Project root for .env lookup. In dev that's the repo root; in
+    // prod that's app_data_dir/audit/.. (one level up from where the
+    // bundled audit/ lives — but the .env is in the project root which
+    // doesn't exist in prod). For prod we'll need a different .env
+    // story, flagged in the UI when ANTHROPIC_API_KEY isn't found.
+    let project_root = audit_dir.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+
+    let sidecar_config = serde_json::json!({
+        "prompt": config.prompt,
+        "url": config.url,
+        "engine": config.engine,
+        "width": config.width,
+        "height": config.height,
+        "outputDir": out_dir.display().to_string(),
+        "projectRoot": project_root.display().to_string(),
+    });
+
+    let script_path = audit_dir.join("ai-test-runner.js");
+    let cmd_string = format!(
+        "cd {} && node {}",
+        shell_quote(&audit_dir),
+        shell_quote(&script_path),
+    );
+
+    let mut child = Command::new("/bin/sh")
+        .args(["-lc", &cmd_string])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    if let Some(mut stdin_pipe) = child.stdin.take() {
+        let payload = sidecar_config.to_string();
+        stdin_pipe
+            .write_all(payload.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+
+    let stdout = child.stdout.take().expect("stdout missing");
+    let stderr = child.stderr.take().expect("stderr missing");
+
+    {
+        let app_for_stderr = app.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                if line.is_empty() {
+                    continue;
+                }
+                let _ = app_for_stderr
+                    .emit("qa-ai-stderr", serde_json::json!({ "line": line }));
+            }
+        });
+    }
+
+    let app_for_events = app.clone();
+    let ts_for_events = ts.clone();
+    let out_dir_for_events = out_dir.clone();
+    thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if line.is_empty() {
+                continue;
+            }
+            let payload: serde_json::Value = serde_json::from_str(&line)
+                .unwrap_or_else(|_| serde_json::json!({ "type": "log", "raw": line }));
+            let event_type = payload
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("log");
+            let _ = app_for_events.emit(&format!("qa-{}", event_type), &payload);
+        }
+        let ai_state = app_for_events.state::<AiTestState>();
+        if let Ok(mut guard) = ai_state.child.lock() {
+            if let Some(mut c) = guard.take() {
+                let _ = c.wait();
+            }
+        }
+        let _ = app_for_events.emit(
+            "qa-ai-finished",
+            serde_json::json!({
+                "id": ts_for_events,
+                "outputDir": out_dir_for_events.display().to_string(),
+            }),
+        );
+    });
+
+    {
+        let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+        *guard = Some(child);
+    }
+
+    Ok(ts)
+}
+
+#[tauri::command]
+pub fn qa_cancel_ai_test(
+    app: AppHandle,
+    state: State<'_, AiTestState>,
+) -> Result<(), String> {
+    let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+    if let Some(mut child) = guard.take() {
+        let pid = child.id() as i32;
+        unsafe {
+            libc::killpg(pid, libc::SIGKILL);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = app.emit("qa-ai-cancelled", serde_json::json!({}));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn qa_check_ai_key(app: AppHandle) -> Result<bool, String> {
+    // Returns true if .env at the project root contains ANTHROPIC_API_KEY.
+    // The sidecar does the actual env-loading; this is just a UI hint
+    // so we can show a setup prompt before the user clicks Run.
+    let audit_dir = resolve_audit_dir(&app)?;
+    let project_root = audit_dir.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let env_path = project_root.join(".env");
+    if !env_path.exists() {
+        return Ok(false);
+    }
+    let txt = fs::read_to_string(&env_path).unwrap_or_default();
+    Ok(txt
+        .lines()
+        .any(|l| l.trim_start().starts_with("ANTHROPIC_API_KEY=") && l.trim().len() > "ANTHROPIC_API_KEY=".len()))
+}
+
 // ── Crawl + pre-launch (Layer 5) ───────────────────────────────────────
 
 #[derive(Deserialize)]
