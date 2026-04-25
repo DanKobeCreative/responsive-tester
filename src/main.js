@@ -15,6 +15,7 @@ import { wireContrastWidget } from './features/contrast.js';
 import { icon } from './features/icons.js';
 import { initCrossBrowser } from './features/qa-audit.js';
 import { initQaSession } from './features/qa-session.js';
+import { initPrelaunch } from './features/qa-prelaunch.js';
 
 // ── Device matrix (April 2026) ──────────────────────────────────────
 const DEFAULT_DEVICES = [
@@ -1535,11 +1536,13 @@ const modeButtons = document.querySelectorAll('.js-rt-mode');
 const previewBody = document.querySelector('.js-rt-body-preview');
 const crossBrowserBody = document.querySelector('.js-rt-body-cross-browser');
 const qaSessionBody = document.querySelector('.js-rt-body-qa-session');
+const prelaunchBody = document.querySelector('.js-rt-body-prelaunch');
 const secondaryToolbar = document.querySelector('.rt-toolbar--secondary');
 let crossBrowserApi = null;
 let qaSessionApi = null;
+let prelaunchApi = null;
 
-const MODES = new Set(['preview', 'cross-browser', 'qa-session']);
+const MODES = new Set(['preview', 'cross-browser', 'qa-session', 'prelaunch']);
 
 function setMode(next) {
   if (!MODES.has(next)) return;
@@ -1553,6 +1556,7 @@ function setMode(next) {
   previewBody.hidden = next !== 'preview';
   crossBrowserBody.hidden = next !== 'cross-browser';
   qaSessionBody.hidden = next !== 'qa-session';
+  prelaunchBody.hidden = next !== 'prelaunch';
   if (secondaryToolbar) secondaryToolbar.hidden = next !== 'preview';
   if (next === 'cross-browser' && crossBrowserApi?.onActivate) crossBrowserApi.onActivate();
   if (next === 'qa-session' && qaSessionApi?.refreshSessions) qaSessionApi.refreshSessions();
@@ -1619,6 +1623,13 @@ function init() {
     setMode,
     getQaSessionState: () => state.qaSession,
     setQaSessionState: (next) => { state.qaSession = { ...state.qaSession, ...next }; saveState(); },
+  });
+
+  // Layer 5 — Pre-Launch tab.
+  prelaunchApi = initPrelaunch({
+    container: prelaunchBody,
+    getCurrentUrl: () => state.url,
+    getAuth: (host) => state.auth[host] ? { username: state.auth[host].user, password: state.auth[host].pass } : null,
   });
 
   setMode(state.mode || 'preview');

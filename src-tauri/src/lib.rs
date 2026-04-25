@@ -11,7 +11,7 @@ use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
-use qa::{LiveSessions, QaState};
+use qa::{LiveSessions, PrelaunchState, QaState};
 
 
 struct CliState {
@@ -324,6 +324,7 @@ pub fn run() {
         }))
         .manage(QaState::default())
         .manage(LiveSessions::default())
+        .manage(PrelaunchState::default())
         .invoke_handler(tauri::generate_handler![
             get_cli_url,
             screenshot_batch_start,
@@ -356,6 +357,9 @@ pub fn run() {
             qa::qa_get_baseline_for_url,
             qa::qa_save_baseline_masks,
             qa::qa_run_diff,
+            qa::qa_run_crawl,
+            qa::qa_run_prelaunch,
+            qa::qa_cancel_prelaunch,
         ])
         .setup(move |app| {
             use tauri::{WebviewUrl, WebviewWindowBuilder};

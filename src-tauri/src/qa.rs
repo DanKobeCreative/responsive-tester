@@ -33,6 +33,13 @@ pub struct QaState {
     pub child: Mutex<Option<Child>>,
 }
 
+// Pre-launch + crawl share their own slot so they can run independently
+// of the screenshot/diff slot above.
+#[derive(Default)]
+pub struct PrelaunchState {
+    pub child: Mutex<Option<Child>>,
+}
+
 // ── Live sessions (Layer 3) ────────────────────────────────────────────
 // Each entry is one headed Playwright window managed by audit/live-session.js.
 // Keyed by `{engine}-{viewport-id}` so re-launching the same combo replaces
@@ -840,6 +847,263 @@ pub fn qa_sweep_orphans() -> Result<u32, String> {
 fn shell_quote_str(s: &str) -> String {
     let escaped = s.replace('\'', "'\\''");
     format!("'{}'", escaped)
+}
+
+// ── Crawl + pre-launch (Layer 5) ───────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct CrawlConfig {
+    #[serde(rename = "startUrl")]
+    pub start_url: String,
+    #[serde(rename = "maxPages", default = "default_max_pages")]
+    pub max_pages: u32,
+    #[serde(default)]
+    pub auth: Option<AuthCreds>,
+    #[serde(rename = "excludePatterns", default)]
+    pub exclude_patterns: Vec<String>,
+}
+
+fn default_max_pages() -> u32 {
+    50
+}
+
+#[derive(Deserialize)]
+pub struct PrelaunchConfig {
+    pub pages: Vec<String>,
+    #[serde(default)]
+    pub auth: Option<AuthCreds>,
+    #[serde(default = "default_run_lighthouse", rename = "runLighthouse")]
+    pub run_lighthouse: bool,
+}
+
+fn default_run_lighthouse() -> bool {
+    true
+}
+
+fn spawn_audit_sidecar(
+    app: &AppHandle,
+    script_filename: &str,
+    sidecar_config: serde_json::Value,
+) -> Result<Child, String> {
+    let audit_dir = resolve_audit_dir(app)?;
+    if !audit_dir.join("node_modules").exists() {
+        return Err("Audit deps not installed. Run setup first.".into());
+    }
+    let script_path = audit_dir.join(script_filename);
+    let cmd_string = format!(
+        "cd {} && node {}",
+        shell_quote(&audit_dir),
+        shell_quote(&script_path),
+    );
+
+    let mut child = Command::new("/bin/sh")
+        .args(["-lc", &cmd_string])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    if let Some(mut stdin_pipe) = child.stdin.take() {
+        let payload = sidecar_config.to_string();
+        stdin_pipe
+            .write_all(payload.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(child)
+}
+
+#[tauri::command]
+pub fn qa_run_crawl(
+    app: AppHandle,
+    state: State<'_, PrelaunchState>,
+    config: CrawlConfig,
+) -> Result<String, String> {
+    {
+        let guard = state.child.lock().map_err(|e| e.to_string())?;
+        if guard.is_some() {
+            return Err("A pre-launch operation is already running.".into());
+        }
+    }
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis()
+        .to_string();
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let out_dir = app_data.join("qa-crawls").join(&ts);
+    fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+    let sidecar_config = serde_json::json!({
+        "startUrl": config.start_url,
+        "maxPages": config.max_pages,
+        "auth": config.auth,
+        "excludePatterns": config.exclude_patterns,
+    });
+
+    let mut child = spawn_audit_sidecar(&app, "crawl.js", sidecar_config)?;
+    let stdout = child.stdout.take().expect("stdout missing");
+    let stderr = child.stderr.take().expect("stderr missing");
+
+    {
+        let app_for_stderr = app.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                if line.is_empty() {
+                    continue;
+                }
+                let _ = app_for_stderr
+                    .emit("qa-crawl-stderr", serde_json::json!({ "line": line }));
+            }
+        });
+    }
+
+    let app_for_events = app.clone();
+    let out_dir_for_events = out_dir.clone();
+    let ts_for_events = ts.clone();
+    thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if line.is_empty() {
+                continue;
+            }
+            let payload: serde_json::Value = serde_json::from_str(&line)
+                .unwrap_or_else(|_| serde_json::json!({ "type": "log", "raw": line }));
+            let event_type = payload
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("log");
+            let _ = app_for_events.emit(&format!("qa-{}", event_type), &payload);
+        }
+        let pl = app_for_events.state::<PrelaunchState>();
+        if let Ok(mut guard) = pl.child.lock() {
+            if let Some(mut c) = guard.take() {
+                let _ = c.wait();
+            }
+        }
+        let _ = app_for_events.emit(
+            "qa-crawl-finished",
+            serde_json::json!({
+                "id": ts_for_events,
+                "outputDir": out_dir_for_events.display().to_string(),
+            }),
+        );
+    });
+
+    {
+        let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+        *guard = Some(child);
+    }
+
+    Ok(ts)
+}
+
+#[tauri::command]
+pub fn qa_run_prelaunch(
+    app: AppHandle,
+    state: State<'_, PrelaunchState>,
+    config: PrelaunchConfig,
+) -> Result<String, String> {
+    {
+        let guard = state.child.lock().map_err(|e| e.to_string())?;
+        if guard.is_some() {
+            return Err("A pre-launch operation is already running.".into());
+        }
+    }
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis()
+        .to_string();
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let out_dir = app_data.join("qa-prelaunch").join(&ts);
+    fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+
+    let sidecar_config = serde_json::json!({
+        "pages": config.pages,
+        "auth": config.auth,
+        "outputDir": out_dir.display().to_string(),
+        "runLighthouse": config.run_lighthouse,
+    });
+
+    let mut child = spawn_audit_sidecar(&app, "prelaunch.js", sidecar_config)?;
+    let stdout = child.stdout.take().expect("stdout missing");
+    let stderr = child.stderr.take().expect("stderr missing");
+
+    {
+        let app_for_stderr = app.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                if line.is_empty() {
+                    continue;
+                }
+                let _ = app_for_stderr
+                    .emit("qa-prelaunch-stderr", serde_json::json!({ "line": line }));
+            }
+        });
+    }
+
+    let app_for_events = app.clone();
+    let out_dir_for_events = out_dir.clone();
+    let ts_for_events = ts.clone();
+    thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if line.is_empty() {
+                continue;
+            }
+            let payload: serde_json::Value = serde_json::from_str(&line)
+                .unwrap_or_else(|_| serde_json::json!({ "type": "log", "raw": line }));
+            let event_type = payload
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("log");
+            let _ = app_for_events.emit(&format!("qa-{}", event_type), &payload);
+        }
+        let pl = app_for_events.state::<PrelaunchState>();
+        if let Ok(mut guard) = pl.child.lock() {
+            if let Some(mut c) = guard.take() {
+                let _ = c.wait();
+            }
+        }
+        let _ = app_for_events.emit(
+            "qa-prelaunch-finished",
+            serde_json::json!({
+                "id": ts_for_events,
+                "outputDir": out_dir_for_events.display().to_string(),
+            }),
+        );
+    });
+
+    {
+        let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+        *guard = Some(child);
+    }
+
+    Ok(ts)
+}
+
+#[tauri::command]
+pub fn qa_cancel_prelaunch(
+    app: AppHandle,
+    state: State<'_, PrelaunchState>,
+) -> Result<(), String> {
+    let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+    if let Some(mut child) = guard.take() {
+        let pid = child.id() as i32;
+        unsafe {
+            libc::killpg(pid, libc::SIGKILL);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = app.emit("qa-prelaunch-cancelled", serde_json::json!({}));
+    }
+    Ok(())
 }
 
 // ── Baselines + visual diff (Layer 4) ──────────────────────────────────
