@@ -13,7 +13,7 @@ import { chromium } from 'playwright';
 
 import { resolveViewports } from './lib/viewports.js';
 import { now, ensureDir, writeJson, writeText } from './lib/util.js';
-import { gotoStable } from './lib/playwright.js';
+import { gotoStable, triggerScrollAnimations } from './lib/playwright.js';
 import { buildReport } from './lib/report.js';
 
 import overflowCheck from './checks/overflow.js';
@@ -182,6 +182,10 @@ async function run() {
 
       try {
         await gotoStable(page, args.url);
+        // Drive scroll-triggered animations (GSAP / ScrollTrigger / Lenis)
+        // so DOM checks see the fully-revealed page and the screenshot
+        // doesn't capture below-the-fold content as opacity-0.
+        await triggerScrollAnimations(page);
         const shotPath = path.join(shotsDir, `${v.id}.png`);
         const ctx = {
           consoleErrors,
