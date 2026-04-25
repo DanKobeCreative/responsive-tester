@@ -72,6 +72,9 @@ async function captureEngine(engineName, viewports, config) {
         // WebKit silently ignores it. hasTouch works everywhere.
         ...(engineName === 'chromium' && v.type === 'mobile' ? { isMobile: true } : {}),
         ...(v.type !== 'desktop' ? { hasTouch: true } : {}),
+        // Layer 6 — media emulation passed through if set.
+        ...(config.colorScheme && config.colorScheme !== 'system' ? { colorScheme: config.colorScheme } : {}),
+        ...(config.reducedMotion ? { reducedMotion: 'reduce' } : {}),
       };
       if (config.auth?.username) {
         contextOpts.httpCredentials = {
@@ -84,7 +87,44 @@ async function captureEngine(engineName, viewports, config) {
       try {
         context = await browser.newContext(contextOpts);
         page = await context.newPage();
+
+        // Layer 6 — console error capture (per page, optional).
+        const consoleErrors = [];
+        if (config.captureConsole) {
+          page.on('console', (m) => {
+            if (m.type() === 'error' || m.type() === 'warning') {
+              consoleErrors.push({ type: m.type(), text: m.text() });
+            }
+          });
+          page.on('pageerror', (err) => consoleErrors.push({ type: 'error', text: err.message }));
+        }
+
+        // Layer 6 — network throttling (Chromium-only via CDP).
+        if (engineName === 'chromium' && config.throttle && config.throttle !== 'none') {
+          const profiles = {
+            'slow-3g': { download: 500_000, upload: 500_000, latency: 400 },
+            'fast-3g': { download: 1_500_000, upload: 750_000, latency: 300 },
+            'regular-4g': { download: 4_000_000, upload: 3_000_000, latency: 170 },
+          };
+          const t = profiles[config.throttle];
+          if (t) {
+            try {
+              const cdp = await context.newCDPSession(page);
+              await cdp.send('Network.emulateNetworkConditions', {
+                offline: false,
+                downloadThroughput: t.download / 8,
+                uploadThroughput: t.upload / 8,
+                latency: t.latency,
+              });
+            } catch { /* CDP failures shouldn't block the run */ }
+          }
+        }
+
+        // Layer 6 — print media emulation. Set after page is loaded.
         await gotoStable(page, config.url);
+        if (config.printMedia) {
+          await page.emulateMedia({ media: 'print' }).catch(() => {});
+        }
         await triggerScrollAnimations(page);
         const shotPath = path.join(engineDir, `${v.id}.png`);
         await page.screenshot({ path: shotPath, fullPage: config.fullPage !== false });
@@ -95,6 +135,7 @@ async function captureEngine(engineName, viewports, config) {
           path: shotPath,
           width: v.w,
           height: v.h,
+          consoleErrors: config.captureConsole ? consoleErrors : undefined,
         });
       } catch (e) {
         emit({ type: 'error', engine: engineName, viewport: v.id, message: e.message });

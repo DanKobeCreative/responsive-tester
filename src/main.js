@@ -84,6 +84,11 @@ const defaults = () => ({
     viewport: 'iphone-16',
     activeUrlSlug: null,
   },
+  // Layer 6: named environments for one-click URL-origin switching.
+  // Path / search / hash on the current URL are preserved; only the
+  // origin is swapped. Stored app-wide so the same set is available
+  // across all projects (revisit if per-workspace becomes useful).
+  environments: [],
   // When true, every non-desktop device frame shows a simulated OS
   // browser chrome (iOS Safari bottom URL bar on iPhones, iPadOS top
   // tab bar on iPads, Chrome top URL bar on Android). The iframe
@@ -921,6 +926,10 @@ function loadUrl(opts = {}) {
   // Layer 3: any live QA session windows should follow the URL change
   // so the user's manual QA pass stays in sync with the toolbar input.
   if (qaSessionApi?.broadcastUrl) qaSessionApi.broadcastUrl(url);
+
+  // Layer 6: re-highlight the active environment chip if the URL's
+  // origin matches one of the saved environments.
+  renderEnvBar();
 }
 
 function renderRecent() {
@@ -946,6 +955,7 @@ async function addBookmark() {
 function openSettings() {
   settingsPanel.hidden = false;
   renderAuthList();
+  if (typeof renderEnvsList === 'function') renderEnvsList();
 }
 function closeSettings() { settingsPanel.hidden = true; }
 
@@ -1527,6 +1537,90 @@ async function applyCliUrl() {
   } catch { /* not available outside tauri */ }
 }
 
+// ── Environment switcher (Layer 6) ──────────────────────────────────
+// Named origins for one-click URL-origin swapping. Pill bar near the
+// URL input renders one chip per env; clicking swaps state.url's origin
+// while keeping path + query + hash intact, then triggers loadUrl.
+const envBar = document.querySelector('.js-rt-envs');
+const envsList = document.querySelector('.js-rt-envs-list');
+const envName = document.querySelector('.js-rt-env-name');
+const envOrigin = document.querySelector('.js-rt-env-origin');
+const envAdd = document.querySelector('.js-rt-env-add');
+
+function renderEnvBar() {
+  if (!envBar) return;
+  if (!state.environments?.length) {
+    envBar.hidden = true;
+    envBar.innerHTML = '';
+    return;
+  }
+  let activeOrigin = '';
+  try { activeOrigin = state.url ? new URL(state.url).origin : ''; } catch {}
+  envBar.hidden = false;
+  envBar.innerHTML = state.environments.map((e) => `
+    <button class="rt-toolbar__chip js-rt-env ${e.origin === activeOrigin ? 'is-active' : ''}" data-origin="${escapeAttr(e.origin)}" title="${escapeAttr(e.origin)}">${escapeHtml(e.name)}</button>
+  `).join('');
+  envBar.querySelectorAll('.js-rt-env').forEach((btn) => btn.addEventListener('click', () => switchEnv(btn.dataset.origin)));
+}
+
+function switchEnv(newOrigin) {
+  if (!state.url) {
+    // No URL loaded — just go to the env's root.
+    urlInput.value = newOrigin;
+    loadUrl();
+    return;
+  }
+  try {
+    const u = new URL(state.url);
+    const target = new URL(newOrigin);
+    u.protocol = target.protocol;
+    u.host = target.host;
+    urlInput.value = u.toString();
+    loadUrl();
+  } catch {
+    urlInput.value = newOrigin;
+    loadUrl();
+  }
+}
+
+function renderEnvsList() {
+  if (!envsList) return;
+  envsList.innerHTML = state.environments.length
+    ? state.environments.map((e, i) => `
+        <li>
+          <code>${escapeHtml(e.name)}</code>
+          <span class="rt-settings__auth-user">${escapeHtml(e.origin)}</span>
+          <button class="js-rt-env-del" data-i="${i}">Remove</button>
+        </li>`).join('')
+    : '<li class="rt-settings__empty">No environments yet.</li>';
+  envsList.querySelectorAll('.js-rt-env-del').forEach((b) => b.addEventListener('click', () => {
+    state.environments.splice(Number(b.dataset.i), 1);
+    saveState();
+    renderEnvsList();
+    renderEnvBar();
+  }));
+}
+
+if (envAdd) envAdd.addEventListener('click', () => {
+  const name = envName.value.trim();
+  const origin = envOrigin.value.trim();
+  if (!name || !origin) return;
+  let normalised = origin;
+  try {
+    const u = new URL(origin);
+    normalised = u.origin;
+  } catch {
+    flash('Origin must be a full URL like https://example.com', true);
+    return;
+  }
+  state.environments.push({ name, origin: normalised });
+  saveState();
+  envName.value = '';
+  envOrigin.value = '';
+  renderEnvsList();
+  renderEnvBar();
+});
+
 // ── Mode switching (Preview / Cross-Browser / QA Session) ───────────
 // All three modes share the URL input and Load button in the primary
 // toolbar. The secondary toolbar carries Preview-only controls (layout,
@@ -1633,6 +1727,10 @@ function init() {
   });
 
   setMode(state.mode || 'preview');
+
+  // Layer 6 — env switcher initial render.
+  renderEnvBar();
+  renderEnvsList();
 
   applyCliUrl();
 }

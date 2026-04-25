@@ -182,7 +182,14 @@ export function initCrossBrowser({ container, getCurrentUrl, getAuth, allDevices
     const engines = ENGINES.filter((e) => selectedEngines.has(e.id)).map((e) => e.id);
 
     const auth = getAuth(hostOf(url)) || null;
-    const config = { url, viewportIds, engines, fullPage: ui.fullPageInput.checked, auth };
+    const config = {
+      url, viewportIds, engines, fullPage: ui.fullPageInput.checked, auth,
+      colorScheme: ui.colorSelect?.value ?? 'system',
+      reducedMotion: !!ui.reducedInput?.checked,
+      printMedia: !!ui.printInput?.checked,
+      throttle: ui.throttleSelect?.value ?? 'none',
+      captureConsole: !!ui.consoleInput?.checked,
+    };
 
     setRunning(true);
     prepareGrid(viewportIds, engines);
@@ -264,18 +271,21 @@ export function initCrossBrowser({ container, getCurrentUrl, getAuth, allDevices
   });
 
   listen('qa-result', (e) => {
-    const { engine, viewport, path, width, height } = e.payload || {};
+    const { engine, viewport, path, width, height, consoleErrors } = e.payload || {};
     const cell = cellMap.get(`${engine}__${viewport}`);
     if (!cell) return;
     const url = convertFileSrc(path);
     cell.classList.remove('is-error');
     cell.classList.add('is-loaded');
     cell.dataset.path = path;
+    const consoleBadge = consoleErrors?.length
+      ? `<span class="rt-qa-results__console-badge" title="${escapeAttr(consoleErrors.map((e) => e.text).join('\\n'))}">⚠ ${consoleErrors.length}</span>`
+      : '';
     cell.innerHTML = `
       <img class="rt-qa-results__img" src="${escapeAttr(url)}" alt="${escapeAttr(`${engine} · ${viewport}`)}" loading="lazy">
-      <div class="rt-qa-results__cell-label">${escapeHtml(engine)} · ${width}×${height}</div>
+      <div class="rt-qa-results__cell-label">${escapeHtml(engine)} · ${width}×${height}${consoleBadge}</div>
     `;
-    if (currentRunMeta) currentRunMeta.results.push({ engine, viewport, path, width, height });
+    if (currentRunMeta) currentRunMeta.results.push({ engine, viewport, path, width, height, consoleErrors });
     bumpProgress();
   });
 
@@ -634,6 +644,31 @@ function buildLayout(container, devices) {
           <input type="checkbox" class="js-rt-qa-fullpage" checked>
           <span>Full page</span>
         </label>
+        <details class="rt-qa-controls__more">
+          <summary>More…</summary>
+          <div class="rt-qa-controls__more-body">
+            <div class="rt-qa-controls__group">
+              <span class="rt-qa-controls__label">Theme</span>
+              <select class="rt-qa-session__viewport js-rt-qa-color">
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </div>
+            <div class="rt-qa-controls__group">
+              <span class="rt-qa-controls__label">Network <em title="Chromium only">(Cr)</em></span>
+              <select class="rt-qa-session__viewport js-rt-qa-throttle">
+                <option value="none">No throttling</option>
+                <option value="slow-3g">Slow 3G</option>
+                <option value="fast-3g">Fast 3G</option>
+                <option value="regular-4g">Regular 4G</option>
+              </select>
+            </div>
+            <label class="rt-qa-controls__toggle"><input type="checkbox" class="js-rt-qa-reduced"><span>Reduced motion</span></label>
+            <label class="rt-qa-controls__toggle"><input type="checkbox" class="js-rt-qa-print"><span>Print media</span></label>
+            <label class="rt-qa-controls__toggle"><input type="checkbox" class="js-rt-qa-console" checked><span>Capture console</span></label>
+          </div>
+        </details>
         <div class="rt-qa-controls__spacer"></div>
         <button class="rt-toolbar__btn js-rt-qa-save-baseline" title="Save the latest run as a baseline for visual diffing">Save baseline</button>
         <button class="rt-toolbar__btn js-rt-qa-compare" title="Compare current run to the saved baseline" disabled>Compare to baseline</button>
@@ -688,6 +723,11 @@ function buildLayout(container, devices) {
     compareBtn: container.querySelector('.js-rt-qa-compare'),
     diffSummary: container.querySelector('.js-rt-qa-diff-summary'),
     fullPageInput: container.querySelector('.js-rt-qa-fullpage'),
+    colorSelect: container.querySelector('.js-rt-qa-color'),
+    throttleSelect: container.querySelector('.js-rt-qa-throttle'),
+    reducedInput: container.querySelector('.js-rt-qa-reduced'),
+    printInput: container.querySelector('.js-rt-qa-print'),
+    consoleInput: container.querySelector('.js-rt-qa-console'),
     engineChips: [...container.querySelectorAll('.js-rt-qa-engines .rt-qa-controls__chip')],
     presetChips: [...container.querySelectorAll('.js-rt-qa-presets .rt-qa-controls__chip')],
     customPicker: container.querySelector('.js-rt-qa-custom'),
