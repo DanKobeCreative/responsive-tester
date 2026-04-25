@@ -12,9 +12,10 @@
 // has no equivalent flag and lands at the macOS default).
 
 import { stdin } from 'node:process';
+import { spawnSync } from 'node:child_process';
 import { chromium, firefox, webkit } from 'playwright';
 
-import { gotoStable, triggerScrollAnimations } from './lib/playwright.js';
+import { gotoStable } from './lib/playwright.js';
 
 const ENGINES = { chromium, firefox, webkit };
 
@@ -62,10 +63,42 @@ function launchArgsFor(engineName, position) {
 
 async function navigate(page, url) {
   await gotoStable(page, url);
-  await triggerScrollAnimations(page);
-  // Critical on macOS: a Playwright-launched window opens behind the
-  // Tauri app by default. bringToFront() pops it to the user.
+  // Deliberately NOT calling triggerScrollAnimations() here. That helper
+  // exists to pre-warm scroll-revealed content before a headless
+  // screenshot. In a headed live session the user will scroll manually,
+  // and pre-scrolling either (a) fires ScrollTrigger before the page's
+  // own JS has registered its triggers (leaving them in a broken state
+  // until reload — observed in WebKit), or (b) shows a visible
+  // jump-to-bottom-and-back the user has to clear with a reload. The
+  // headed use case wants the page exactly as the user would see it.
   try { await page.bringToFront(); } catch { /* best-effort */ }
+}
+
+// page.bringToFront() only switches Playwright's intra-browser tab focus.
+// On macOS we additionally need to activate the browser process at the
+// OS level — otherwise the new window opens behind the Tauri app and
+// the user has to alt-tab to find it.
+//
+// Playwright's public Browser API doesn't expose the underlying
+// process PID. Workaround: pgrep for the just-launched ms-playwright
+// binary by engine name. -n returns the newest matching PID, which is
+// the one we just spawned.
+function activateBrowserApp(engineName) {
+  if (process.platform !== 'darwin') return;
+  try {
+    const find = spawnSync('pgrep', ['-nf', `ms-playwright/${engineName}`], {
+      encoding: 'utf8',
+    });
+    const pid = (find.stdout || '').trim();
+    if (!pid || Number.isNaN(Number(pid))) return;
+    spawnSync('osascript', [
+      '-e',
+      `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`,
+    ], { stdio: 'ignore' });
+  } catch {
+    // Best-effort. If pgrep / osascript aren't available we leave the
+    // window open and the user can switch to it manually.
+  }
 }
 
 async function run() {
@@ -105,6 +138,10 @@ async function run() {
   });
 
   await navigate(page, config.url);
+  // Initial OS-level activation. NOT repeated on later navigate commands
+  // — yanking focus on every URL sync would feel obnoxious when the user
+  // is intentionally working inside the Responsive Tester app.
+  activateBrowserApp(config.engine);
 
   emit({
     type: 'session-ready',
