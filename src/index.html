@@ -40,6 +40,7 @@
             <button class="rt-open-external__item" role="menuitem" data-target="ios-simulator"><span class="rt-browser-dot rt-browser-dot--ios"></span><span>iOS Simulator</span><span class="rt-open-external__hint">real iPadOS/iOS Safari</span></button>
           </div>
         </div>
+        <div class="rt-toolbar__envs js-rt-envs" hidden></div>
         <div class="rt-toolbar__filter" role="tablist" aria-label="Device class filter">
           <button class="rt-toolbar__chip is-active js-rt-filter" data-filter="all" title="⌘0">All</button>
           <button class="rt-toolbar__chip js-rt-filter" data-filter="mobile" title="⌘1"><span class="rt-dot rt-dot--mobile"></span>Mobile</button>
@@ -161,6 +162,17 @@
             <button class="rt-toolbar__btn js-rt-workspace-save">Save current</button>
           </div>
           <ul class="rt-settings__list js-rt-workspaces"></ul>
+        </div>
+
+        <div class="rt-settings__section">
+          <h4>Environments</h4>
+          <p>Named URL origins for one-click swapping. Path / query / hash on the current URL are preserved.</p>
+          <div class="rt-settings__row">
+            <input type="text" class="js-rt-env-name" placeholder="Name (e.g. Local)">
+            <input type="text" class="js-rt-env-origin" placeholder="https://example.com or http://localhost:8080">
+            <button class="rt-toolbar__btn js-rt-env-add">Add</button>
+          </div>
+          <ul class="rt-settings__list js-rt-envs-list"></ul>
         </div>
 
         <div class="rt-settings__section">
