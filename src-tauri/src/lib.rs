@@ -9,6 +9,7 @@ use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+
 struct CliState {
     url: Option<String>,
 }
@@ -297,7 +298,16 @@ fn parse_cli_url() -> Option<String> {
 pub fn run() {
     let cli_url = parse_cli_url();
 
+    // Pick an unused port on startup and serve the built frontend from
+    // http://localhost:<port> via tauri-plugin-localhost. This replaces
+    // the default tauri://localhost scheme so the app shell is same-
+    // protocol (http) as the http://localhost:8080 sites we point it
+    // at. Without this, WKWebView blocks those iframes as mixed content.
+    let port = portpicker::pick_unused_port().expect("failed to find a free localhost port");
+    let app_url = format!("http://localhost:{}", port);
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_localhost::Builder::new(port).build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -319,6 +329,20 @@ pub fn run() {
             check_links,
             open_externally,
         ])
+        .setup(move |app| {
+            use tauri::{WebviewUrl, WebviewWindowBuilder};
+            // The windows array in tauri.conf.json is ignored when we build
+            // a window programmatically so we can point it at the localhost
+            // plugin's dynamic URL.
+            let url: tauri::Url = app_url.parse().expect("invalid localhost url");
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+                .title("Responsive Tester")
+                .inner_size(1400.0, 900.0)
+                .min_inner_size(900.0, 600.0)
+                .resizable(true)
+                .build()?;
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1876,3 +1876,318 @@ body {
 }
 
 .rt-flash--error { background: var(--rt-danger, #ef4444); color: #fff; }
+
+/* ── Simulated browser chrome per device class ────────────────────────
+   Overlays inside .rt-device__shell that fake the OS browser's URL bar.
+   iframes keep their full device viewport height; the chrome sits on
+   top (z-index 2) as a translucent layer so content flows behind it
+   exactly like the real browser. Toggled via .js-rt-chrome-toggle. */
+.rt-device__browser-chrome {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+  font: 500 12px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+/* ── iOS Safari — bottom "Liquid Glass" URL bar ──
+   Apple's compact browsing state. Strong backdrop-filter blur over a
+   very low-alpha surface is what sells the glass look; you can see
+   content behind it softened and tinted, not blocked. The [aA], URL,
+   and share glyph live in an inner pill. Home indicator sits below. */
+.rt-bchrome--ios {
+  background: linear-gradient(
+    to top,
+    rgba(22, 22, 24, 0.55) 0%,
+    rgba(22, 22, 24, 0.3) 100%
+  );
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border-top: 0.5px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 10px 16px 10px;
+}
+.rt-bchrome-ios__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 14px;
+  background: rgba(118, 118, 128, 0.24);
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.rt-bchrome-ios__aa {
+  display: inline-flex;
+  align-items: baseline;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.75);
+  letter-spacing: -0.03em;
+  min-width: 22px;
+}
+.rt-bchrome-ios__aa span { font-size: 10px; margin-left: 1px; }
+.rt-bchrome-ios__url {
+  flex: 1;
+  text-align: center;
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rt-bchrome-ios__share {
+  width: 18px;
+  height: 20px;
+  flex-shrink: 0;
+  opacity: 0.75;
+  position: relative;
+}
+.rt-bchrome-ios__share::before {
+  /* upload-arrow glyph: vertical line + chevron top + open box below */
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 13px;
+  background: currentColor;
+  transform: translateX(-50%);
+}
+.rt-bchrome-ios__share::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 10px;
+  height: 6px;
+  border: 2px solid currentColor;
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
+  transform: translateX(-50%) rotate(0);
+  clip-path: polygon(0 100%, 50% 0, 100% 100%);
+}
+.rt-bchrome-ios__home {
+  align-self: center;
+  width: 34%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.88);
+  margin-top: auto;
+}
+
+/* ── iPadOS Safari — glass top bar ──
+   Modern iPadOS layout: sidebar toggle, back/forward pair, centred URL
+   pill, share + tabs. Same glass surface; slightly less saturation
+   because iPad chrome is typically taller/wider so the background shows
+   through more of the chrome height. */
+.rt-bchrome--ipados {
+  background: rgba(32, 32, 34, 0.55);
+  backdrop-filter: blur(28px) saturate(170%);
+  -webkit-backdrop-filter: blur(28px) saturate(170%);
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px;
+}
+.rt-bchrome-ipados__sidebar {
+  width: 18px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.75;
+  border: 1.2px solid currentColor;
+  border-radius: 3px;
+  position: relative;
+}
+.rt-bchrome-ipados__sidebar::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  border-left: 1.2px solid currentColor;
+}
+.rt-bchrome-ipados__nav {
+  display: inline-flex;
+  gap: 12px;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.rt-bchrome-ipados__chev {
+  width: 8px;
+  height: 8px;
+  border-top: 1.4px solid currentColor;
+  border-left: 1.4px solid currentColor;
+}
+.rt-bchrome-ipados__chev--left  { transform: rotate(-45deg); }
+.rt-bchrome-ipados__chev--right { transform: rotate(135deg); }
+.rt-bchrome-ipados__bar {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 14px;
+  background: rgba(118, 118, 128, 0.22);
+  border: 0.5px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  max-width: 58%;
+  margin: 0 auto;
+}
+.rt-bchrome-ipados__lock {
+  width: 8px;
+  height: 10px;
+  flex-shrink: 0;
+  opacity: 0.7;
+  position: relative;
+  background: currentColor;
+  border-radius: 1px;
+}
+.rt-bchrome-ipados__lock::before {
+  content: "";
+  position: absolute;
+  inset: -3px 1.5px auto 1.5px;
+  border: 1.2px solid currentColor;
+  border-bottom: 0;
+  border-radius: 2.5px 2.5px 0 0;
+  height: 4px;
+}
+.rt-bchrome-ipados__host {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+.rt-bchrome-ipados__share,
+.rt-bchrome-ipados__tabs {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.rt-bchrome-ipados__share {
+  background:
+    linear-gradient(currentColor, currentColor) center 2px / 2px 10px no-repeat,
+    linear-gradient(currentColor, currentColor) center 2px / 8px 2px no-repeat;
+  position: relative;
+}
+.rt-bchrome-ipados__share::after {
+  content: "";
+  position: absolute;
+  inset: 8px 1px 0 1px;
+  border: 1.4px solid currentColor;
+  border-top: 0;
+  border-radius: 0 0 2px 2px;
+}
+.rt-bchrome-ipados__tabs {
+  border: 1.4px solid currentColor;
+  border-radius: 3px;
+  position: relative;
+}
+.rt-bchrome-ipados__tabs::before {
+  content: "";
+  position: absolute;
+  inset: -2px 2px auto auto;
+  width: 10px;
+  height: 10px;
+  border: 1.4px solid currentColor;
+  border-radius: 2px;
+  background: inherit;
+}
+
+/* ── Android Chrome — Material 3 solid top bar ──
+   Android's chrome is conventionally more opaque than iOS — solid
+   fill, rounded URL pill, tab-count indicator on the right, vertical
+   kebab menu. Darker surface, minimal blur. */
+.rt-bchrome--android {
+  background: rgba(32, 33, 36, 0.97);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+}
+.rt-bchrome-android__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 38px;
+  padding: 0 14px;
+  background: rgba(60, 64, 67, 0.92);
+  border-radius: 24px;
+}
+.rt-bchrome-android__lock {
+  width: 9px;
+  height: 11px;
+  flex-shrink: 0;
+  opacity: 0.85;
+  background: currentColor;
+  border-radius: 1px;
+  position: relative;
+}
+.rt-bchrome-android__lock::before {
+  content: "";
+  position: absolute;
+  inset: -3px 1.5px auto 1.5px;
+  border: 1.4px solid currentColor;
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+  height: 4.5px;
+}
+.rt-bchrome-android__url {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.rt-bchrome-android__tabs {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: 1.8px solid currentColor;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.82;
+}
+.rt-bchrome-android__menu {
+  width: 4px;
+  height: 18px;
+  flex-shrink: 0;
+  background:
+    radial-gradient(circle at 50% 10%, currentColor 35%, transparent 36%),
+    radial-gradient(circle at 50% 50%, currentColor 35%, transparent 36%),
+    radial-gradient(circle at 50% 90%, currentColor 35%, transparent 36%);
+  opacity: 0.7;
+}
+
+/* Toggle button — active state pill so it reads as a switch */
+.js-rt-chrome-toggle.is-active {
+  background: rgba(56, 189, 248, 0.14);
+  color: #67e8f9;
+  border-color: rgba(56, 189, 248, 0.35);
+}
+.js-rt-chrome-toggle:not(.is-active) {
+  opacity: 0.7;
+}

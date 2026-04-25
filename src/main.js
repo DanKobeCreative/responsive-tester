@@ -66,6 +66,14 @@ const defaults = () => ({
   videoDuration: 15,
   toolbarsHidden: false,
   sidebarHidden: false,
+  // When true, every non-desktop device frame shows a simulated OS
+  // browser chrome (iOS Safari bottom URL bar on iPhones, iPadOS top
+  // tab bar on iPads, Chrome top URL bar on Android). The iframe
+  // height is reduced accordingly so content renders above the chrome
+  // by default, matching what the real browser does when its URL bar
+  // is fully expanded. Toggle off to simulate the URL-bar-collapsed
+  // state and see content fill the full viewport.
+  showBrowserChrome: true,
 });
 
 function loadState() {
@@ -268,6 +276,7 @@ function deviceCardHtml(d, variantKey = '', variantLabel = '') {
       </div>
       <div class="rt-device__shell">
         <iframe class="rt-device__frame" title="${escapeAttr(d.name)} preview" loading="lazy"></iframe>
+        <div class="rt-device__browser-chrome" hidden aria-hidden="true"></div>
         <div class="rt-device__overlay" hidden></div>
         <div class="rt-device__resize" aria-label="Resize"></div>
       </div>
@@ -314,6 +323,70 @@ function buildAll() {
   buildGrid();
 }
 
+// ── Browser chrome simulation ───────────────────────────────────────
+// Each non-desktop device frame can render a simulated OS browser
+// chrome so content behind the URL bar is obvious at a glance.
+// Heights are in DEVICE CSS pixels (pre-scale); applyScale multiplies
+// by state.scale when setting the overlay's rendered dims.
+const IOS_SAFARI_URL_BAR_H = 95;
+const IPAD_SAFARI_BAR_H = 52;
+const ANDROID_CHROME_BAR_H = 56;
+
+function browserChromeFor(device) {
+  if (device.type === 'desktop') return null;
+  const name = device.name.toLowerCase();
+  if (name.startsWith('iphone')) return { position: 'bottom', height: IOS_SAFARI_URL_BAR_H, kind: 'ios' };
+  if (name.startsWith('ipad'))   return { position: 'top',    height: IPAD_SAFARI_BAR_H,   kind: 'ipados' };
+  // Everything else in mobile/tablet is Android-class (Galaxy, Pixel, Z Fold).
+  return { position: 'top', height: ANDROID_CHROME_BAR_H, kind: 'android' };
+}
+
+function chromeMarkup(kind, url) {
+  const host = (() => {
+    try { return new URL(url || 'about:blank').host || 'example.com'; }
+    catch { return url || 'example.com'; }
+  })();
+  if (kind === 'ios') {
+    // iOS Safari (iOS 17/18) compact bottom URL bar: [aA] [URL] [share]
+    // with the home indicator pill beneath. Whole bar uses the
+    // translucent "Liquid Glass" look driven by backdrop-filter.
+    return `
+      <div class="rt-bchrome-ios__bar">
+        <span class="rt-bchrome-ios__aa" aria-hidden="true">A<span>A</span></span>
+        <span class="rt-bchrome-ios__url">${escapeHtml(host)}</span>
+        <span class="rt-bchrome-ios__share" aria-hidden="true"></span>
+      </div>
+      <div class="rt-bchrome-ios__home" aria-hidden="true"></div>
+    `;
+  }
+  if (kind === 'ipados') {
+    // iPadOS 17/18 Safari compact top bar. Sidebar toggle on the left,
+    // centred URL pill, share + tabs on the right. Glass background.
+    return `
+      <span class="rt-bchrome-ipados__sidebar" aria-hidden="true"></span>
+      <span class="rt-bchrome-ipados__nav" aria-hidden="true">
+        <span class="rt-bchrome-ipados__chev rt-bchrome-ipados__chev--left"></span>
+        <span class="rt-bchrome-ipados__chev rt-bchrome-ipados__chev--right"></span>
+      </span>
+      <div class="rt-bchrome-ipados__bar">
+        <span class="rt-bchrome-ipados__lock" aria-hidden="true"></span>
+        <span class="rt-bchrome-ipados__host">${escapeHtml(host)}</span>
+      </div>
+      <span class="rt-bchrome-ipados__share" aria-hidden="true"></span>
+      <span class="rt-bchrome-ipados__tabs" aria-hidden="true"></span>
+    `;
+  }
+  // Android Chrome (Material 3) — lighter, more opaque, squarer URL field
+  return `
+    <div class="rt-bchrome-android__bar">
+      <span class="rt-bchrome-android__lock" aria-hidden="true"></span>
+      <span class="rt-bchrome-android__url">${escapeHtml(host)}</span>
+      <span class="rt-bchrome-android__tabs" aria-hidden="true">1</span>
+      <span class="rt-bchrome-android__menu" aria-hidden="true"></span>
+    </div>
+  `;
+}
+
 // ── Scale + visibility ──────────────────────────────────────────────
 // applyScale can fire 60+ times/sec while dragging the scale slider. Cache
 // the device DOM refs on the wrapper element (once), look up the device
@@ -324,6 +397,7 @@ function getDeviceRefs(wrap) {
     wrap._rtRefs = {
       shell: wrap.querySelector('.rt-device__shell'),
       iframe: wrap.querySelector('.rt-device__frame'),
+      chrome: wrap.querySelector('.rt-device__browser-chrome'),
       dims: wrap.querySelector('.js-rt-dims'),
     };
   }
@@ -339,14 +413,47 @@ function applyScale() {
     const d = deviceMap.get(wrap.dataset.srcId);
     if (!d) continue;
     const { w, h } = dimsFor(d);
-    const { shell, iframe, dims } = getDeviceRefs(wrap);
+    const { shell, iframe, chrome, dims } = getDeviceRefs(wrap);
+
     const scaledW = Math.round(w * scale);
     const scaledH = Math.round(h * scale);
     shell.style.width = `${scaledW + 16}px`;
     shell.style.height = `${scaledH + 16}px`;
+    // iframe stays at the full device viewport so content flows behind
+    // the browser chrome exactly as it does in the real browser. The
+    // chrome is an overlay with its own z-index layered on top.
     iframe.style.width = `${w}px`;
     iframe.style.height = `${h}px`;
     iframe.style.transform = `scale(${scale})`;
+    iframe.style.marginTop = '0';
+
+    const chromeSpec = state.showBrowserChrome ? browserChromeFor(d) : null;
+    if (chrome) {
+      if (chromeSpec) {
+        chrome.hidden = false;
+        chrome.className = `rt-device__browser-chrome rt-bchrome rt-bchrome--${chromeSpec.kind} rt-bchrome--${chromeSpec.position}`;
+        chrome.style.width = `${scaledW}px`;
+        chrome.style.height = `${Math.round(chromeSpec.height * scale)}px`;
+        if (chromeSpec.position === 'top') {
+          chrome.style.top = '8px';
+          chrome.style.bottom = 'auto';
+        } else {
+          chrome.style.bottom = '8px';
+          chrome.style.top = 'auto';
+        }
+        chrome.style.left = '8px';
+        // Re-render inner content only if the kind or URL changed so
+        // we don't repaint on every scale-slider tick.
+        if (chrome.dataset.kind !== chromeSpec.kind || chrome.dataset.url !== (state.url || '')) {
+          chrome.innerHTML = chromeMarkup(chromeSpec.kind, state.url);
+          chrome.dataset.kind = chromeSpec.kind;
+          chrome.dataset.url = state.url || '';
+        }
+      } else {
+        chrome.hidden = true;
+      }
+    }
+
     if (dims) dims.textContent = `${w} × ${h}`;
   }
 }
@@ -788,6 +895,10 @@ function loadUrl(opts = {}) {
     const isDark = wrap.dataset.variant === 'dark';
     loadQueue.add(() => loadFrame(iframe, wrap, url, isDark));
   });
+
+  // Refresh simulated browser-chrome labels so the new host renders in
+  // every device's URL bar overlay.
+  applyScale();
 }
 
 function renderRecent() {
@@ -1181,6 +1292,27 @@ document.querySelector('.js-rt-auth-save').addEventListener('click', saveAuth);
 document.querySelector('.js-rt-custom-add').addEventListener('click', addCustomDevice);
 
 const SYNC_SNIPPET = `<script>(function(){if(window.parent===window)return;var ig=false;window.addEventListener('scroll',function(){if(ig){ig=false;return}parent.postMessage({rt:'scroll',y:scrollY,x:scrollX},'*')},{passive:true});window.addEventListener('message',function(e){if(e.data&&e.data.rt==='scroll'){ig=true;window.scrollTo(e.data.x,e.data.y)}})})();</script>`;
+
+// Simulated URL-bar toggle for mobile + tablet frames. When on, each
+// non-desktop device reserves space for its native browser chrome
+// (iOS Safari bottom URL bar, iPadOS top tab bar, Android Chrome top
+// URL bar) so content renders above the chrome by default. Flip it off
+// to simulate the URL-bar-collapsed state and see content fill the full
+// viewport. applyScale() reads state.showBrowserChrome each frame.
+const chromeToggleBtn = document.querySelector('.js-rt-chrome-toggle');
+if (chromeToggleBtn) {
+  const syncToggle = () => {
+    chromeToggleBtn.classList.toggle('is-active', state.showBrowserChrome);
+    chromeToggleBtn.setAttribute('aria-pressed', String(state.showBrowserChrome));
+  };
+  syncToggle();
+  chromeToggleBtn.addEventListener('click', () => {
+    state.showBrowserChrome = !state.showBrowserChrome;
+    saveState();
+    syncToggle();
+    applyScale();
+  });
+}
 
 // Browser-chrome selector — persists state.browser and live-updates the
 // focused device if one is currently maximised.
