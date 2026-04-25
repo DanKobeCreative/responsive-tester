@@ -19,7 +19,7 @@ import { stdin } from 'node:process';
 import { chromium, firefox, webkit } from 'playwright';
 
 import { ALL_VIEWPORTS } from './lib/viewports.js';
-import { gotoStable } from './lib/playwright.js';
+import { gotoStable, triggerScrollAnimations } from './lib/playwright.js';
 
 const ENGINES = { chromium, firefox, webkit };
 
@@ -85,6 +85,7 @@ async function captureEngine(engineName, viewports, config) {
         context = await browser.newContext(contextOpts);
         page = await context.newPage();
         await gotoStable(page, config.url);
+        await triggerScrollAnimations(page);
         const shotPath = path.join(engineDir, `${v.id}.png`);
         await page.screenshot({ path: shotPath, fullPage: config.fullPage !== false });
         emit({

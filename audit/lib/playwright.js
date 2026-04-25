@@ -24,3 +24,24 @@ export async function gotoStable(page, url, opts = {}) {
   }
   throw lastErr;
 }
+
+// Scroll the viewport top-to-bottom one screen at a time so GSAP /
+// ScrollTrigger / IntersectionObserver / Lenis-driven reveals all fire
+// before the screenshot is taken. Without this, full-page captures show
+// below-the-fold content as opacity-0 or pre-translation because no
+// scroll events have ever occurred. Returns to the top so full-page
+// screenshots start where the user would.
+export async function triggerScrollAnimations(page, { pause = 300 } = {}) {
+  const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
+  const viewportHeight = await page.evaluate(() => window.innerHeight);
+  let scrolled = 0;
+
+  while (scrolled < scrollHeight) {
+    scrolled += viewportHeight;
+    await page.evaluate((y) => window.scrollTo(0, y), scrolled);
+    await page.waitForTimeout(pause);
+  }
+
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(500);
+}
