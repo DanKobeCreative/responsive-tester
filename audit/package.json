@@ -7,6 +7,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
     "@axe-core/playwright": "^4.11.1",
-    "playwright": "^1.59.1"
+    "pixelmatch": "^7.1.0",
+    "playwright": "^1.59.1",
+    "pngjs": "^7.0.0"
   }
 }

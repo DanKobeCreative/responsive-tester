@@ -350,6 +350,12 @@ pub fn run() {
             qa::qa_list_checklists,
             qa::qa_write_text,
             qa::qa_sweep_orphans,
+            qa::qa_save_baseline,
+            qa::qa_list_baselines,
+            qa::qa_delete_baseline,
+            qa::qa_get_baseline_for_url,
+            qa::qa_save_baseline_masks,
+            qa::qa_run_diff,
         ])
         .setup(move |app| {
             use tauri::{WebviewUrl, WebviewWindowBuilder};
