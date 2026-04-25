@@ -1,3 +1,5 @@
+mod qa;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -8,6 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use tauri::State;
+
+use qa::QaState;
 
 
 struct CliState {
@@ -312,11 +316,13 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(CliState { url: cli_url }))
         .manage(Mutex::new(VideoState {
             proc: None,
             path: None,
         }))
+        .manage(QaState::default())
         .invoke_handler(tauri::generate_handler![
             get_cli_url,
             screenshot_batch_start,
@@ -328,14 +334,28 @@ pub fn run() {
             fetch_url_meta,
             check_links,
             open_externally,
+            qa::qa_check_setup,
+            qa::qa_resolve_audit_dir,
+            qa::qa_install_audit_deps,
+            qa::qa_run_screenshot_audit,
+            qa::qa_cancel_audit,
         ])
         .setup(move |app| {
             use tauri::{WebviewUrl, WebviewWindowBuilder};
             // The windows array in tauri.conf.json is ignored when we build
-            // a window programmatically so we can point it at the localhost
-            // plugin's dynamic URL.
-            let url: tauri::Url = app_url.parse().expect("invalid localhost url");
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+            // a window programmatically. Production builds load via the
+            // localhost plugin so http://localhost:8080 dev sites stop
+            // hitting WKWebView's mixed-content block. Dev builds have to
+            // use Vite's dev URL because tauri-plugin-localhost resolves
+            // frontendDist from resource_dir(), which is empty under
+            // `cargo tauri dev` — pointing the webview there yields a
+            // blank page. HMR is the bigger DX win in dev anyway.
+            let main_url: tauri::Url = if cfg!(dev) {
+                "http://localhost:1420".parse().expect("invalid dev url")
+            } else {
+                app_url.parse().expect("invalid localhost url")
+            };
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(main_url))
                 .title("Responsive Tester")
                 .inner_size(1400.0, 900.0)
                 .min_inner_size(900.0, 600.0)
