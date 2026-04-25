@@ -8,7 +8,7 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-import { escapeHtml, escapeAttr, flash, hostOf } from './utils.js';
+import { escapeHtml, escapeAttr, flash, hostOf, promptModal } from './utils.js';
 import { icon } from './icons.js';
 
 const SAVED_TESTS_KEY = 'rt-ai-tests';
@@ -183,8 +183,8 @@ export function initAiTest({ container, getCurrentUrl, getAuth, allDevices }) {
     if (saveBtn) saveBtn.addEventListener('click', saveTest);
   }
 
-  function saveTest() {
-    const name = window.prompt('Name for this test:', '');
+  async function saveTest() {
+    const name = await promptModal('Name for this test', '');
     if (!name) return;
     const list = JSON.parse(localStorage.getItem(SAVED_TESTS_KEY) || '[]');
     list.unshift({
