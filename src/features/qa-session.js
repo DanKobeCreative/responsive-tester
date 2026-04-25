@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-import { escapeHtml, escapeAttr, slug, flash, hostOf } from './utils.js';
+import { escapeHtml, escapeAttr, slug, flash, hostOf, promptModal, confirmModal } from './utils.js';
 import { icon } from './icons.js';
 
 const ENGINES = [
@@ -228,7 +228,7 @@ export function initQaSession({ container, getCurrentUrl, getAuth, allDevices, s
     const urlSlug = slug(url);
     const existing = await invoke('qa_load_checklist', { urlSlug }).catch(() => null);
     if (existing) {
-      const fresh = window.confirm(`A checklist already exists for ${url}. Start fresh? (Cancel to keep the existing one.)`);
+      const fresh = await confirmModal(`A checklist already exists for ${url}. Start fresh? (Cancel to keep the existing one.)`, 'Existing checklist');
       if (!fresh) {
         checklist = JSON.parse(existing);
         activeUrlSlug = urlSlug;
@@ -393,10 +393,10 @@ export function initQaSession({ container, getCurrentUrl, getAuth, allDevices, s
       renderChecklist();
       renderProgress();
     }));
-    ui.checklist.querySelectorAll('.js-del-section').forEach((b) => b.addEventListener('click', (e) => {
+    ui.checklist.querySelectorAll('.js-del-section').forEach((b) => b.addEventListener('click', async (e) => {
       e.stopPropagation();
       const i = Number(b.dataset.sidx);
-      if (!window.confirm(`Delete section "${checklist.sections[i].name}"?`)) return;
+      if (!await confirmModal(`Delete section "${checklist.sections[i].name}"?`, 'Delete section')) return;
       checklist.sections.splice(i, 1);
       saveChecklistDebounced();
       renderChecklist();
@@ -431,11 +431,11 @@ export function initQaSession({ container, getCurrentUrl, getAuth, allDevices, s
       checklist.sections[s].checks[c].notes = t.value;
       saveChecklistDebounced();
     }));
-    ui.checklist.querySelectorAll('.js-del-check').forEach((b) => b.addEventListener('click', () => {
+    ui.checklist.querySelectorAll('.js-del-check').forEach((b) => b.addEventListener('click', async () => {
       const li = b.closest('.rt-qa-check');
       const s = Number(li.dataset.sidx);
       const c = Number(li.dataset.cidx);
-      if (!window.confirm(`Delete check "${checklist.sections[s].checks[c].label}"?`)) return;
+      if (!await confirmModal(`Delete check "${checklist.sections[s].checks[c].label}"?`, 'Delete check')) return;
       checklist.sections[s].checks.splice(c, 1);
       saveChecklistDebounced();
       renderChecklist();
@@ -450,8 +450,8 @@ export function initQaSession({ container, getCurrentUrl, getAuth, allDevices, s
 
     // Footer
     const addBtn = ui.checklist.querySelector('.js-add-section');
-    if (addBtn) addBtn.addEventListener('click', () => {
-      const name = window.prompt('Section name?', 'New section');
+    if (addBtn) addBtn.addEventListener('click', async () => {
+      const name = await promptModal('Section name', 'New section');
       if (!name) return;
       checklist.sections.push({
         id: slug(name) || `section-${Date.now()}`,
@@ -463,8 +463,8 @@ export function initQaSession({ container, getCurrentUrl, getAuth, allDevices, s
       renderProgress();
     });
     const resetBtn = ui.checklist.querySelector('.js-reset-checklist');
-    if (resetBtn) resetBtn.addEventListener('click', () => {
-      if (!window.confirm('Reset all check states to unchecked? (Sections + structure preserved.)')) return;
+    if (resetBtn) resetBtn.addEventListener('click', async () => {
+      if (!await confirmModal('Reset all check states to unchecked? (Sections + structure preserved.)', 'Reset checklist')) return;
       for (const section of checklist.sections) {
         for (const check of section.checks) {
           check.status = 'unchecked';
