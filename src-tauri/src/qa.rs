@@ -15,14 +15,15 @@
 // go through `/bin/sh -lc` so the user's login shell loads ~/.zprofile
 // and the right paths show up.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -30,6 +31,45 @@ use tauri::{AppHandle, Emitter, Manager, State};
 #[derive(Default)]
 pub struct QaState {
     pub child: Mutex<Option<Child>>,
+}
+
+// ── Live sessions (Layer 3) ────────────────────────────────────────────
+// Each entry is one headed Playwright window managed by audit/live-session.js.
+// Keyed by `{engine}-{viewport-id}` so re-launching the same combo replaces
+// the previous instance instead of stacking.
+
+pub struct LiveSession {
+    pub child: Child,
+    pub stdin: ChildStdin,
+}
+
+#[derive(Default)]
+pub struct LiveSessions {
+    pub sessions: Mutex<HashMap<String, LiveSession>>,
+}
+
+#[derive(Deserialize)]
+pub struct ViewportSpec {
+    pub id: String,
+    pub width: u32,
+    pub height: u32,
+    #[serde(rename = "type")]
+    pub kind: String, // "mobile" | "tablet" | "desktop"
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct WindowPosition {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Deserialize)]
+pub struct SessionConfig {
+    pub url: String,
+    pub engine: String,
+    pub viewport: ViewportSpec,
+    pub auth: Option<AuthCreds>,
+    pub position: Option<WindowPosition>,
 }
 
 #[derive(Serialize)]
@@ -419,4 +459,385 @@ fn cleanup_old_qa_runs(runs_root: &Path, keep: usize) {
     for old in dirs.into_iter().skip(keep) {
         let _ = fs::remove_dir_all(old.path());
     }
+}
+
+// ── Live sessions (Layer 3) ────────────────────────────────────────────
+
+fn kill_session_processes(session: &mut LiveSession) {
+    let pid = session.child.id() as i32;
+    unsafe {
+        libc::killpg(pid, libc::SIGKILL);
+    }
+    let _ = session.child.kill();
+    let _ = session.child.wait();
+}
+
+#[tauri::command]
+pub async fn qa_launch_session(
+    app: AppHandle,
+    state: State<'_, LiveSessions>,
+    config: SessionConfig,
+) -> Result<String, String> {
+    let session_id = format!("{}-{}", config.engine, config.viewport.id);
+
+    // If an instance for this engine+viewport is already up, kill it
+    // first so launches act as "replace" rather than "stack".
+    {
+        let mut guard = state.sessions.lock().map_err(|e| e.to_string())?;
+        if let Some(mut existing) = guard.remove(&session_id) {
+            kill_session_processes(&mut existing);
+            let _ = app.emit(
+                "qa-session-closed",
+                serde_json::json!({ "sessionId": session_id, "reason": "replaced" }),
+            );
+        }
+    }
+
+    let audit_dir = resolve_audit_dir(&app)?;
+    if !audit_dir.join("node_modules").exists() {
+        return Err("Audit deps not installed. Run setup first.".into());
+    }
+    let script_path = audit_dir.join("live-session.js");
+    let cmd_string = format!(
+        "cd {} && node {}",
+        shell_quote(&audit_dir),
+        shell_quote(&script_path),
+    );
+
+    let mut child = Command::new("/bin/sh")
+        .args(["-lc", &cmd_string])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let mut stdin = child.stdin.take().ok_or("Could not capture stdin.")?;
+    let stdout = child.stdout.take().ok_or("Could not capture stdout.")?;
+    let stderr = child.stderr.take().ok_or("Could not capture stderr.")?;
+
+    // Send the initial config followed by a newline (the sidecar reads
+    // exactly one line for its config, then keeps stdin open for
+    // navigate commands).
+    let config_json = serde_json::json!({
+        "url": config.url,
+        "engine": config.engine,
+        "viewport": {
+            "id": config.viewport.id,
+            "width": config.viewport.width,
+            "height": config.viewport.height,
+            "type": config.viewport.kind,
+        },
+        "auth": config.auth,
+        "position": config.position,
+    });
+    let mut payload = config_json.to_string();
+    payload.push('\n');
+    stdin
+        .write_all(payload.as_bytes())
+        .map_err(|e| e.to_string())?;
+    stdin.flush().map_err(|e| e.to_string())?;
+
+    // Stderr → log events.
+    {
+        let app_for_stderr = app.clone();
+        let id_for_stderr = session_id.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                if line.is_empty() {
+                    continue;
+                }
+                let _ = app_for_stderr.emit(
+                    "qa-session-stderr",
+                    serde_json::json!({ "sessionId": id_for_stderr, "line": line }),
+                );
+            }
+        });
+    }
+
+    // Stdout reader — first reads lines synchronously until session-ready
+    // (or fatal) arrives; signals back via channel; then continues to
+    // emit subsequent events for the rest of the session lifetime.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
+    let app_for_reader = app.clone();
+    let id_for_reader = session_id.clone();
+    thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        let mut signalled = false;
+        for line in reader.lines().map_while(Result::ok) {
+            if line.is_empty() {
+                continue;
+            }
+            let mut payload: serde_json::Value = serde_json::from_str(&line)
+                .unwrap_or_else(|_| serde_json::json!({ "type": "log", "raw": line }));
+            let event_type = payload
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("log")
+                .to_string();
+            if !signalled {
+                if event_type == "session-ready" {
+                    let _ = tx.send(Ok(()));
+                    signalled = true;
+                } else if event_type == "fatal" {
+                    let msg = payload
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown error")
+                        .to_string();
+                    let _ = tx.send(Err(msg));
+                    break;
+                }
+            }
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert(
+                    "sessionId".to_string(),
+                    serde_json::Value::String(id_for_reader.clone()),
+                );
+            }
+            let _ = app_for_reader.emit(&format!("qa-{}", event_type), &payload);
+        }
+        // Stdout EOF — sidecar exited. Clean up the entry if it's still
+        // tracked, and emit a close event so the UI updates.
+        let qa_state = app_for_reader.state::<LiveSessions>();
+        if let Ok(mut sessions) = qa_state.sessions.lock() {
+            if let Some(mut existing) = sessions.remove(&id_for_reader) {
+                let _ = existing.child.wait();
+            }
+        }
+        let _ = app_for_reader.emit(
+            "qa-session-closed",
+            serde_json::json!({ "sessionId": id_for_reader, "reason": "exited" }),
+        );
+    });
+
+    // Block until ready or timeout.
+    match rx.recv_timeout(Duration::from_secs(30)) {
+        Ok(Ok(())) => {}
+        Ok(Err(msg)) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("Session sidecar failed: {}", msg));
+        }
+        Err(_) => {
+            // Timeout. Tear it down before returning.
+            let pid = child.id() as i32;
+            unsafe {
+                libc::killpg(pid, libc::SIGKILL);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Timed out waiting for browser to launch (30s).".into());
+        }
+    }
+
+    {
+        let mut guard = state.sessions.lock().map_err(|e| e.to_string())?;
+        guard.insert(session_id.clone(), LiveSession { child, stdin });
+    }
+
+    Ok(session_id)
+}
+
+#[tauri::command]
+pub fn qa_navigate_session(
+    state: State<'_, LiveSessions>,
+    session_id: String,
+    url: String,
+) -> Result<(), String> {
+    let mut guard = state.sessions.lock().map_err(|e| e.to_string())?;
+    let session = guard
+        .get_mut(&session_id)
+        .ok_or_else(|| format!("No such session: {}", session_id))?;
+    let payload = format!(
+        "{}\n",
+        serde_json::json!({ "type": "navigate", "url": url })
+    );
+    session
+        .stdin
+        .write_all(payload.as_bytes())
+        .map_err(|e| e.to_string())?;
+    session.stdin.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn qa_close_session(
+    app: AppHandle,
+    state: State<'_, LiveSessions>,
+    session_id: String,
+) -> Result<(), String> {
+    let mut guard = state.sessions.lock().map_err(|e| e.to_string())?;
+    if let Some(mut session) = guard.remove(&session_id) {
+        kill_session_processes(&mut session);
+        let _ = app.emit(
+            "qa-session-closed",
+            serde_json::json!({ "sessionId": session_id, "reason": "user" }),
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn qa_close_all_sessions(
+    app: AppHandle,
+    state: State<'_, LiveSessions>,
+) -> Result<(), String> {
+    let mut guard = state.sessions.lock().map_err(|e| e.to_string())?;
+    let ids: Vec<String> = guard.keys().cloned().collect();
+    for id in ids {
+        if let Some(mut session) = guard.remove(&id) {
+            kill_session_processes(&mut session);
+            let _ = app.emit(
+                "qa-session-closed",
+                serde_json::json!({ "sessionId": id, "reason": "user" }),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn qa_list_sessions(state: State<'_, LiveSessions>) -> Result<Vec<String>, String> {
+    let guard = state.sessions.lock().map_err(|e| e.to_string())?;
+    Ok(guard.keys().cloned().collect())
+}
+
+// ── Checklist persistence (Layer 3) ────────────────────────────────────
+
+fn checklists_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("qa-checklists");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+#[derive(Serialize)]
+pub struct ChecklistMeta {
+    pub url_slug: String,
+    pub last_modified_ms: u128,
+    pub bytes: u64,
+}
+
+#[tauri::command]
+pub fn qa_save_checklist(
+    app: AppHandle,
+    url_slug: String,
+    json: String,
+) -> Result<(), String> {
+    let dir = checklists_dir(&app)?;
+    let path = dir.join(format!("{}.json", sanitise_slug(&url_slug)));
+    fs::write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn qa_load_checklist(
+    app: AppHandle,
+    url_slug: String,
+) -> Result<Option<String>, String> {
+    let dir = checklists_dir(&app)?;
+    let path = dir.join(format!("{}.json", sanitise_slug(&url_slug)));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    Ok(Some(content))
+}
+
+#[tauri::command]
+pub fn qa_list_checklists(app: AppHandle) -> Result<Vec<ChecklistMeta>, String> {
+    let dir = checklists_dir(&app)?;
+    let mut out = Vec::new();
+    let entries = fs::read_dir(&dir).map_err(|e| e.to_string())?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        if stem.is_empty() {
+            continue;
+        }
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let modified_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        out.push(ChecklistMeta {
+            url_slug: stem,
+            last_modified_ms: modified_ms,
+            bytes: metadata.len(),
+        });
+    }
+    out.sort_by(|a, b| b.last_modified_ms.cmp(&a.last_modified_ms));
+    Ok(out)
+}
+
+fn sanitise_slug(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+// ── Generic file write (used by HTML report export) ───────────────────
+
+#[tauri::command]
+pub fn qa_write_text(path: String, contents: String) -> Result<(), String> {
+    fs::write(&path, contents.as_bytes()).map_err(|e| e.to_string())
+}
+
+// ── Orphan sweep (Layer 3 startup) ─────────────────────────────────────
+// Force-quit (kill -9, Activity Monitor) leaves zero chance for the
+// app's normal cleanup hooks to run, so any live-session or cross-browser
+// child processes survive as orphans. Sweep them on next launch.
+
+#[tauri::command]
+pub fn qa_sweep_orphans() -> Result<u32, String> {
+    let patterns = ["audit/live-session.js", "audit/cross-browser.js"];
+    let mut killed = 0u32;
+    for pattern in patterns {
+        let pids_out = Command::new("/bin/sh")
+            .args(["-lc", &format!("pgrep -f {}", shell_quote_str(pattern))])
+            .output();
+        let count = match pids_out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .count() as u32,
+            _ => 0,
+        };
+        if count > 0 {
+            let _ = Command::new("/bin/sh")
+                .args(["-lc", &format!("pkill -9 -f {}", shell_quote_str(pattern))])
+                .status();
+            killed += count;
+        }
+    }
+    Ok(killed)
+}
+
+fn shell_quote_str(s: &str) -> String {
+    let escaped = s.replace('\'', "'\\''");
+    format!("'{}'", escaped)
 }
