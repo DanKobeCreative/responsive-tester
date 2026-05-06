@@ -11,10 +11,7 @@
     <div class="rt-app">
       <nav class="rt-modes" role="tablist" aria-label="Workspace mode">
         <button class="rt-modes__tab is-active js-rt-mode" data-mode="preview" role="tab" aria-selected="true">Preview</button>
-        <button class="rt-modes__tab js-rt-mode" data-mode="cross-browser" role="tab" aria-selected="false">Cross-Browser</button>
-        <button class="rt-modes__tab js-rt-mode" data-mode="qa-session" role="tab" aria-selected="false">QA Session</button>
-        <button class="rt-modes__tab js-rt-mode" data-mode="prelaunch" role="tab" aria-selected="false">Pre-Launch</button>
-        <button class="rt-modes__tab js-rt-mode" data-mode="ai-test" role="tab" aria-selected="false">AI Test</button>
+        <button class="rt-modes__tab js-rt-mode" data-mode="viewports" role="tab" aria-selected="false">Devices</button>
       </nav>
       <div class="rt-toolbar">
         <input
@@ -30,17 +27,6 @@
         <button class="rt-toolbar__btn rt-toolbar__btn--primary js-rt-load">Load</button>
         <button class="rt-toolbar__btn js-rt-refresh" title="Reload all frames (⌘R)">Refresh</button>
         <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-bookmark" title="Bookmark (⌘D)" aria-label="Bookmark" data-icon="bookmark"></button>
-        <div class="rt-open-external js-rt-open-external">
-          <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-open-external-trigger" title="Open current URL in an external browser / iOS Simulator" aria-label="Open externally" aria-haspopup="menu" aria-expanded="false" data-icon="external-link"></button>
-          <div class="rt-open-external__menu js-rt-open-external-menu" role="menu" hidden>
-            <div class="rt-open-external__heading">Open current URL in</div>
-            <button class="rt-open-external__item" role="menuitem" data-target="safari"><span class="rt-browser-dot rt-browser-dot--safari"></span><span>Safari</span><span class="rt-open-external__hint">WebKit (macOS)</span></button>
-            <button class="rt-open-external__item" role="menuitem" data-target="chrome"><span class="rt-browser-dot rt-browser-dot--chrome"></span><span>Chrome</span><span class="rt-open-external__hint">Blink</span></button>
-            <button class="rt-open-external__item" role="menuitem" data-target="firefox"><span class="rt-browser-dot rt-browser-dot--firefox"></span><span>Firefox</span><span class="rt-open-external__hint">Gecko</span></button>
-            <div class="rt-open-external__sep"></div>
-            <button class="rt-open-external__item" role="menuitem" data-target="ios-simulator"><span class="rt-browser-dot rt-browser-dot--ios"></span><span>iOS Simulator</span><span class="rt-open-external__hint">real iPadOS/iOS Safari</span></button>
-          </div>
-        </div>
         <div class="rt-toolbar__envs js-rt-envs" hidden></div>
         <div class="rt-toolbar__filter" role="tablist" aria-label="Device class filter">
           <button class="rt-toolbar__chip is-active js-rt-filter" data-filter="all" title="⌘0">All</button>
@@ -116,13 +102,7 @@
         <div class="rt-grid js-rt-grid"></div>
       </div>
 
-      <div class="rt-body rt-body--qa js-rt-body-cross-browser" hidden></div>
-
-      <div class="rt-body rt-body--qa js-rt-body-qa-session" hidden></div>
-
-      <div class="rt-body rt-body--qa js-rt-body-prelaunch" hidden></div>
-
-      <div class="rt-body rt-body--qa js-rt-body-ai-test" hidden></div>
+      <div class="rt-body rt-body--qa js-rt-body-viewports" hidden></div>
     </div>
 
     <!-- Load progress toast (shows while iframes are queueing) -->
