@@ -44,21 +44,41 @@ async function readStdinJsonOnce() {
   });
 }
 
-function launchArgsFor(engineName, position) {
+function launchArgsFor(engineName, position, fit) {
   const args = [];
-  if (!position) return args;
   if (engineName === 'chromium') {
-    args.push(`--window-position=${position.x},${position.y}`);
-  } else if (engineName === 'firefox') {
-    // Firefox launch in Playwright accepts -window-position via firefoxUserPrefs
-    // is not the path; the CLI flag form is two-arg `-width X -height Y`. There
-    // is no documented position flag — rely on the OS default for Firefox too
-    // and accept manual repositioning by the user. (See plan note: WebKit AND
-    // Firefox both fall back to OS default; Chromium is the only one that
-    // reliably honours window-position from Playwright.)
+    if (position) args.push(`--window-position=${position.x},${position.y}`);
+    if (fit?.scaledWindow) {
+      // OS window size in actual pixels. +90 ≈ Chrome's chrome (tabs +
+      // address bar) so the page area lands at the scaled viewport.
+      args.push(`--window-size=${fit.scaledWindow.width},${fit.scaledWindow.height + 90}`);
+    }
   }
-  // WebKit: no positional flag.
+  // Firefox: scaling is set via firefoxUserPrefs (devPixelsPerPx), not args.
+  // WebKit: no scale or position flag — accept OS default.
   return args;
+}
+
+// Decide whether the launched window will overflow the host display, and
+// if so what scale factor brings it within the available area. Returns
+// null when the viewport fits as-is (no scaling needed).
+function computeFit(viewport, config) {
+  if (!config.fitToScreen) return null;
+  const screenW = Number(config.screenWidth) || 0;
+  const screenH = Number(config.screenHeight) || 0;
+  if (!screenW || !screenH) return null;
+  if (viewport.width <= screenW && viewport.height <= screenH) return null;
+  // 0.92 leaves a small margin so the window doesn't bump into the menu
+  // bar / dock. Round the scale to 2 dp for predictability.
+  const raw = Math.min(screenW / viewport.width, screenH / viewport.height) * 0.92;
+  const scale = Math.round(raw * 100) / 100;
+  return {
+    scale,
+    scaledWindow: {
+      width: Math.round(viewport.width * scale),
+      height: Math.round(viewport.height * scale),
+    },
+  };
 }
 
 async function navigate(page, url) {
@@ -79,25 +99,70 @@ async function navigate(page, url) {
 // OS level — otherwise the new window opens behind the Tauri app and
 // the user has to alt-tab to find it.
 //
-// Playwright's public Browser API doesn't expose the underlying
-// process PID. Workaround: pgrep for the just-launched ms-playwright
-// binary by engine name. -n returns the newest matching PID, which is
-// the one we just spawned.
+// AppleScript via "System Events" requires Automation/Accessibility
+// permission (granted via System Settings → Privacy & Security). Many
+// installs never see that prompt, so we try the more reliable
+// `open -a <appPath>` first — it routes through Launch Services and
+// doesn't need any privacy permission.
+function sleepSync(ms) {
+  spawnSync('sleep', [String(ms / 1000)], { stdio: 'ignore' });
+}
+
+function findBrowserPid(engineName) {
+  // Patterns vary by Playwright version + engine. -n returns the newest
+  // matching PID, which is the one we just spawned.
+  const patterns = {
+    chromium: ['Chromium.app/Contents/MacOS/Chromium', 'ms-playwright/chromium'],
+    firefox:  ['Nightly.app/Contents/MacOS/firefox', 'ms-playwright/firefox'],
+    webkit:   ['Playwright.app/Contents/MacOS/Playwright', 'ms-playwright/webkit'],
+  }[engineName] || [`ms-playwright/${engineName}`];
+  for (const pattern of patterns) {
+    const find = spawnSync('pgrep', ['-nf', pattern], { encoding: 'utf8' });
+    const pid = (find.stdout || '').trim().split('\n')[0];
+    if (pid && !Number.isNaN(Number(pid))) return Number(pid);
+  }
+  return null;
+}
+
+function appPathForPid(pid) {
+  // `ps -o comm=` gives the full executable path. Walk up until we hit
+  // the enclosing .app bundle so `open -a` can target it directly.
+  const ps = spawnSync('ps', ['-p', String(pid), '-o', 'comm='], { encoding: 'utf8' });
+  let p = (ps.stdout || '').trim();
+  while (p && !p.endsWith('.app')) {
+    const idx = p.lastIndexOf('/');
+    if (idx <= 0) return null;
+    p = p.slice(0, idx);
+  }
+  return p && p.endsWith('.app') ? p : null;
+}
+
 function activateBrowserApp(engineName) {
   if (process.platform !== 'darwin') return;
+  // Window registration with the macOS window server is async after
+  // process launch. A short delay before we ask to focus avoids racing
+  // ahead of the window appearing.
+  sleepSync(300);
   try {
-    const find = spawnSync('pgrep', ['-nf', `ms-playwright/${engineName}`], {
-      encoding: 'utf8',
-    });
-    const pid = (find.stdout || '').trim();
-    if (!pid || Number.isNaN(Number(pid))) return;
+    const pid = findBrowserPid(engineName);
+    if (!pid) return;
+
+    // Path 1: open -a — the friendliest route, no permissions needed.
+    const appPath = appPathForPid(pid);
+    if (appPath) {
+      const r = spawnSync('open', ['-a', appPath], { stdio: 'ignore' });
+      if (r.status === 0) return;
+    }
+
+    // Path 2: AppleScript fallback. Will be a no-op if Tauri lacks
+    // Automation permission for "System Events", but harmless to try.
     spawnSync('osascript', [
       '-e',
       `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`,
     ], { stdio: 'ignore' });
   } catch {
-    // Best-effort. If pgrep / osascript aren't available we leave the
-    // window open and the user can switch to it manually.
+    // Best-effort. If neither path works the user can ⌘-Tab to the
+    // browser manually.
   }
 }
 
@@ -110,14 +175,35 @@ async function run() {
   const launcher = ENGINES[config.engine];
   if (!launcher) throw new Error(`Unknown engine: ${config.engine}`);
 
-  const browser = await launcher.launch({
+  // Fit-to-screen: when on and the viewport overflows the host display,
+  // we shrink the rendered surface to fit. Chromium uses CDP scale +
+  // --window-size; Firefox uses layout.css.devPixelsPerPx; WebKit has
+  // no equivalent so we emit a warning and launch unscaled.
+  const fit = computeFit(config.viewport, config);
+  if (fit && config.engine === 'webkit') {
+    emit({ type: 'session-warning', message: `WebKit doesn't support fit-to-screen; the ${config.viewport.width}×${config.viewport.height} window will overflow the display.` });
+  }
+
+  const launchOpts = {
     headless: false,
-    args: launchArgsFor(config.engine, config.position),
-  });
+    args: launchArgsFor(config.engine, config.position, fit),
+  };
+  if (fit && config.engine === 'firefox') {
+    // devPixelsPerPx scales the entire UI rendering — a 2560-wide page
+    // rendered at 0.5 occupies 1280 device pixels of window area.
+    launchOpts.firefoxUserPrefs = {
+      'layout.css.devPixelsPerPx': fit.scale.toString(),
+    };
+  }
+
+  const browser = await launcher.launch(launchOpts);
 
   const contextOpts = {
     viewport: { width: config.viewport.width, height: config.viewport.height },
-    deviceScaleFactor: 1,
+    // Retina-quality rendering. The previous 1x default produced soft
+    // text on Retina-host displays and identically soft PNGs when
+    // screenshotted.
+    deviceScaleFactor: 2,
     ...(config.engine === 'chromium' && config.viewport.type === 'mobile' ? { isMobile: true } : {}),
     ...(config.viewport.type !== 'desktop' ? { hasTouch: true } : {}),
   };
@@ -130,6 +216,23 @@ async function run() {
 
   const context = await browser.newContext(contextOpts);
   const page = await context.newPage();
+
+  // Chromium: apply CDP scale so the rendered surface visually shrinks
+  // inside the (already scaled) OS window.
+  if (fit && config.engine === 'chromium') {
+    try {
+      const client = await context.newCDPSession(page);
+      await client.send('Emulation.setDeviceMetricsOverride', {
+        width: config.viewport.width,
+        height: config.viewport.height,
+        deviceScaleFactor: 2,
+        mobile: config.viewport.type !== 'desktop',
+        scale: fit.scale,
+      });
+    } catch (err) {
+      emit({ type: 'session-warning', message: `Chromium fit-to-screen failed: ${err.message ?? err}` });
+    }
+  }
 
   // Surface tab close as session end so the Rust side can update the UI.
   page.on('close', () => {
@@ -167,6 +270,19 @@ async function run() {
         if (cmd.type === 'navigate' && cmd.url) {
           await navigate(page, cmd.url);
           emit({ type: 'session-navigated', url: cmd.url });
+        } else if (cmd.type === 'screenshot' && cmd.path) {
+          // Briefly hand focus back to the browser tab so any
+          // hover/scroll-driven UI lands in a stable state, then capture.
+          // Don't bringToFront() — the user is in the Tauri app driving
+          // the screenshot button; pulling focus away is jarring.
+          await page.screenshot({ path: cmd.path, fullPage: !!cmd.fullPage });
+          emit({
+            type: 'screenshot-saved',
+            path: cmd.path,
+            fullPage: !!cmd.fullPage,
+            engine: config.engine,
+            viewport: config.viewport.id,
+          });
         } else {
           emit({ type: 'session-error', message: `Unknown command type: ${cmd.type}` });
         }

@@ -1,16 +1,10 @@
 {
   "name": "responsive-tester-audit",
   "private": true,
-  "version": "0.4.0",
-  "description": "QA runner deps for the Responsive Tester desktop app. Kept separate from the root package so the desktop bundle's first-run install only pulls Playwright and friends, not Vite + Tauri build tooling.",
+  "version": "0.5.0",
+  "description": "Live-session sidecar deps for the Responsive Tester desktop app. Kept separate from the root package so the desktop bundle's first-run install only pulls Playwright, not Vite + Tauri build tooling.",
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.90.0",
-    "@axe-core/playwright": "^4.11.1",
-    "chrome-launcher": "^1.1.2",
-    "lighthouse": "^12.4.0",
-    "pixelmatch": "^7.1.0",
-    "playwright": "^1.59.1",
-    "pngjs": "^7.0.0"
+    "playwright": "^1.59.1"
   }
 }

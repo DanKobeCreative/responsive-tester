@@ -11,7 +11,7 @@ use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
-use qa::{AiTestState, LiveSessions, PrelaunchState, QaState};
+use qa::LiveSessions;
 
 
 struct CliState {
@@ -49,48 +49,6 @@ fn new_batch_dir() -> Result<PathBuf, String> {
 #[tauri::command]
 fn screenshot_batch_start() -> Result<String, String> {
     Ok(new_batch_dir()?.to_string_lossy().to_string())
-}
-
-/// Launch the given URL in an external macOS app or the iOS Simulator.
-/// `target` is one of: "safari", "chrome", "firefox", "ios-simulator".
-/// For ios-simulator we first boot Simulator.app (auto-selects the last-
-/// used device, or a default), then pipe the URL in via `xcrun simctl`.
-#[tauri::command]
-fn open_externally(target: String, url: String) -> Result<(), String> {
-    match target.as_str() {
-        "safari" => run_open(&["-a", "Safari", &url]),
-        "chrome" => run_open(&["-a", "Google Chrome", &url]),
-        "firefox" => run_open(&["-a", "Firefox", &url]),
-        "ios-simulator" => {
-            // Boot Simulator.app (no-op if already open) so a device is
-            // available for simctl to pipe the URL to.
-            let _ = Command::new("open").args(["-a", "Simulator"]).output();
-            // Give the Simulator a moment to finish booting a device — a
-            // cold-start takes ~2–3 seconds before simctl sees "booted".
-            std::thread::sleep(Duration::from_millis(2500));
-            let status = Command::new("xcrun")
-                .args(["simctl", "openurl", "booted", &url])
-                .output()
-                .map_err(|e| format!("xcrun failed: {}", e))?;
-            if !status.status.success() {
-                let stderr = String::from_utf8_lossy(&status.stderr);
-                return Err(format!(
-                    "iOS Simulator couldn't open the URL — make sure Xcode is installed and a simulator is booted ({}).",
-                    stderr.trim()
-                ));
-            }
-            Ok(())
-        }
-        other => Err(format!("Unknown target: {}", other)),
-    }
-}
-
-fn run_open(args: &[&str]) -> Result<(), String> {
-    Command::new("open")
-        .args(args)
-        .output()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
 }
 
 fn safe_filename(label: &str) -> String {
@@ -322,10 +280,7 @@ pub fn run() {
             proc: None,
             path: None,
         }))
-        .manage(QaState::default())
         .manage(LiveSessions::default())
-        .manage(PrelaunchState::default())
-        .manage(AiTestState::default())
         .invoke_handler(tauri::generate_handler![
             get_cli_url,
             screenshot_batch_start,
@@ -336,34 +291,16 @@ pub fn run() {
             fetch_url_text,
             fetch_url_meta,
             check_links,
-            open_externally,
             qa::qa_check_setup,
             qa::qa_resolve_audit_dir,
             qa::qa_install_audit_deps,
-            qa::qa_run_screenshot_audit,
-            qa::qa_cancel_audit,
             qa::qa_launch_session,
             qa::qa_navigate_session,
+            qa::qa_screenshot_session,
             qa::qa_close_session,
             qa::qa_close_all_sessions,
             qa::qa_list_sessions,
-            qa::qa_save_checklist,
-            qa::qa_load_checklist,
-            qa::qa_list_checklists,
-            qa::qa_write_text,
             qa::qa_sweep_orphans,
-            qa::qa_save_baseline,
-            qa::qa_list_baselines,
-            qa::qa_delete_baseline,
-            qa::qa_get_baseline_for_url,
-            qa::qa_save_baseline_masks,
-            qa::qa_run_diff,
-            qa::qa_run_crawl,
-            qa::qa_run_prelaunch,
-            qa::qa_cancel_prelaunch,
-            qa::qa_run_ai_test,
-            qa::qa_cancel_ai_test,
-            qa::qa_check_ai_key,
         ])
         .setup(move |app| {
             use tauri::{WebviewUrl, WebviewWindowBuilder};

@@ -13,10 +13,7 @@ import {
 import { openPanel, clearPanelCache } from './features/panels.js';
 import { wireContrastWidget } from './features/contrast.js';
 import { icon } from './features/icons.js';
-import { initCrossBrowser } from './features/qa-audit.js';
-import { initQaSession } from './features/qa-session.js';
-import { initPrelaunch } from './features/qa-prelaunch.js';
-import { initAiTest } from './features/qa-ai-test.js';
+import { initViewports } from './features/qa-viewports.js';
 
 // ── Device matrix (April 2026) ──────────────────────────────────────
 const DEFAULT_DEVICES = [
@@ -40,6 +37,43 @@ const DEFAULT_DEVICES = [
   { id: 'macbook-pro-16',    name: 'MacBook Pro 16"',       w: 1728, h: 1117, type: 'desktop' },
   { id: 'full-hd',           name: 'Full HD',               w: 1920, h: 1080, type: 'desktop' },
   { id: 'qhd-1440p',         name: '1440p QHD',             w: 2560, h: 1440, type: 'desktop' },
+];
+
+// Ship-Ready synthetic widths -- see studio CLAUDE.md §15.2. Extends the
+// real device list with breakpoint-aligned and phone-landscape widths the
+// device matrix doesn't natively cover. Disabled by default; the
+// "Ship-Ready (17)" sidebar preset enables the canonical set.
+const SHIP_READY_DEVICES = [
+  { id: 'sr-narrow-320',     name: 'Narrow smoke',          w: 320,  h: 568,  type: 'mobile',  default_enabled: false },
+  { id: 'sr-sm-640',         name: 'sm breakpoint',         w: 640,  h: 960,  type: 'mobile',  default_enabled: false },
+  { id: 'sr-iphone-se-land', name: 'iPhone SE landscape',   w: 667,  h: 375,  type: 'mobile',  default_enabled: false },
+  { id: 'sr-md-768',         name: 'iPad Mini / md',        w: 768,  h: 1024, type: 'tablet',  default_enabled: false },
+  { id: 'sr-iphone-16-land', name: 'iPhone 16 landscape',   w: 852,  h: 393,  type: 'tablet',  default_enabled: false },
+  { id: 'sr-lg-1024',        name: 'iPad Pro 11" / lg',     w: 1024, h: 1366, type: 'tablet',  default_enabled: false },
+  { id: 'sr-mbp-1440',       name: 'MacBook Pro / 1440',    w: 1440, h: 900,  type: 'desktop', default_enabled: false },
+];
+
+// Canonical Kobe Ship-Ready preset ids -- 17 viewports total. Mix of real
+// DEFAULT_DEVICES entries and SHIP_READY_DEVICES synthetic widths. Order
+// is narrow-to-wide for sidebar display.
+const SHIP_READY_PRESET_IDS = [
+  'sr-narrow-320',     // 320
+  'z-fold-cover',      // 344
+  'galaxy-s24',        // 360
+  'iphone-se',         // 375
+  'iphone-16',         // 393
+  'iphone-17-pro-max', // 440
+  'sr-sm-640',         // 640
+  'sr-iphone-se-land', // 667
+  'sr-md-768',         // 768
+  'sr-iphone-16-land', // 852
+  'z-fold-open',       // 884
+  'sr-lg-1024',        // 1024
+  'macbook-air-13',    // 1280
+  'laptop-hd',         // 1366
+  'sr-mbp-1440',       // 1440
+  'full-hd',           // 1920
+  'qhd-1440p',         // 2560
 ];
 
 const TYPE_LABEL = { mobile: 'Mobile', tablet: 'Tablet', desktop: 'Desktop' };
@@ -71,19 +105,15 @@ const defaults = () => ({
   videoDuration: 15,
   toolbarsHidden: false,
   sidebarHidden: false,
-  // Active workspace mode: 'preview' (the iframe grid) | 'cross-browser'
-  // (Playwright-driven multi-engine screenshot audit — Layer 2) |
-  // 'qa-session' (live headed-browser windows + per-URL checklist —
-  // Layer 3).
+  // Active workspace mode: 'preview' (the iframe grid) | 'viewports'
+  // (headed Playwright launcher over the canonical 12-device QA matrix).
   mode: 'preview',
-  // Layer 3: last-used engine + viewport for live QA sessions, plus the
-  // url-slug of the most recently opened checklist so we can re-open it
-  // on next launch. Checklists themselves live on disk under
-  // {app_data_dir}/qa-checklists/, not in localStorage.
-  qaSession: {
-    engine: 'chromium',
-    viewport: 'iphone-16',
-    activeUrlSlug: null,
+  // Persisted Viewports tab toggles. `fitToScreen` defaults to true so
+  // wide viewports (1920+, QHD) shrink to fit the host display on first
+  // launch; `fullPage` defaults to false (visible viewport only).
+  viewports: {
+    fitToScreen: true,
+    fullPage: false,
   },
   // Layer 6: named environments for one-click URL-origin switching.
   // Path / search / hash on the current URL are preserved; only the
@@ -134,10 +164,40 @@ saveState();
 let _allDevicesCache = null;
 function allDevices() {
   if (_allDevicesCache) return _allDevicesCache;
-  _allDevicesCache = [...DEFAULT_DEVICES, ...state.customDevices];
+  _allDevicesCache = [...DEFAULT_DEVICES, ...SHIP_READY_DEVICES, ...state.customDevices];
   return _allDevicesCache;
 }
 function invalidateDevices() { _allDevicesCache = null; }
+
+// Single source of truth for "is this device on?" -- handles both the
+// real-device default (on unless toggled off) and the SR-preset default
+// (off unless explicitly enabled via preset or checkbox). Existing user
+// localStorage doesn't have keys for SR devices, so missing-key defaults
+// to default_enabled !== false rather than the legacy "missing = on"
+// rule that applies to real devices.
+function deviceEnabled(d) {
+  if (d.id in state.enabled) return state.enabled[d.id] !== false;
+  return d.default_enabled !== false;
+}
+
+// Apply a sidebar preset. 'ship-ready' enables the canonical
+// 17-viewport Kobe QA set (CLAUDE.md §15.2); 'defaults' resets every
+// device to its default_enabled value (real devices on, SR off).
+// Mutates state.enabled, persists, and re-renders sidebar + grid
+// visibility without rebuilding iframes.
+function applyPreset(name) {
+  if (name === 'ship-ready') {
+    const wanted = new Set(SHIP_READY_PRESET_IDS);
+    for (const d of allDevices()) state.enabled[d.id] = wanted.has(d.id);
+  } else if (name === 'defaults') {
+    for (const d of allDevices()) state.enabled[d.id] = d.default_enabled !== false;
+  } else {
+    return;
+  }
+  saveState();
+  buildSidebar();
+  applyVisibility();
+}
 
 // ── DOM refs ────────────────────────────────────────────────────────
 const grid = document.querySelector('.js-rt-grid');
@@ -211,7 +271,7 @@ function buildSidebar() {
       const isCustom = d.id.startsWith('custom-');
       return `
         <label class="rt-sidebar__toggle">
-          <input type="checkbox" data-device="${d.id}" ${state.enabled[d.id] !== false ? 'checked' : ''}>
+          <input type="checkbox" data-device="${d.id}" ${deviceEnabled(d) ? 'checked' : ''}>
           <span class="rt-sidebar__toggle-name">${escapeHtml(d.name)}</span>
           <span class="rt-sidebar__toggle-dims">${d.w}</span>
           ${isCustom ? `<button class="rt-sidebar__toggle-del js-rt-custom-del" data-id="${d.id}" aria-label="Remove custom device">×</button>` : ''}
@@ -232,6 +292,13 @@ function buildSidebar() {
       <button class="rt-sidebar__hide js-rt-hide-sidebar" title="Hide sidebar (⌘B)" aria-label="Hide sidebar" data-icon="panel-left-close"></button>
     </div>
     <div class="rt-sidebar__section">
+      <div class="rt-sidebar__title">Presets</div>
+      <div class="rt-sidebar__presets">
+        <button class="rt-sidebar__preset js-rt-preset" data-preset="ship-ready" title="Kobe Creative canonical 17-viewport QA matrix (CLAUDE.md §15.2)">Ship-Ready (17)</button>
+        <button class="rt-sidebar__preset js-rt-preset" data-preset="defaults" title="Reset to per-device defaults">Defaults</button>
+      </div>
+    </div>
+    <div class="rt-sidebar__section">
       <div class="rt-sidebar__title">Bookmarks</div>
       ${bookmarkRows}
     </div>
@@ -240,6 +307,10 @@ function buildSidebar() {
 
   hydrateIcons(sidebar);
   sidebar.querySelector('.js-rt-hide-sidebar').addEventListener('click', () => toggleSidebar());
+
+  sidebar.querySelectorAll('.js-rt-preset').forEach((btn) => {
+    btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+  });
 
   sidebar.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
     cb.addEventListener('change', () => {
@@ -261,6 +332,7 @@ function buildSidebar() {
       state.bookmarks.splice(Number(btn.dataset.index), 1);
       saveState();
       buildSidebar();
+      viewportsApi?.renderBookmarks?.();
     });
   });
   sidebar.querySelectorAll('.js-rt-custom-del').forEach((btn) => {
@@ -496,7 +568,7 @@ function applyVisibility() {
     const d = deviceMap.get(wrap.dataset.srcId);
     if (!d) continue;
     const matchesFilter = state.filter === 'all' || state.filter === d.type;
-    const show = state.enabled[d.id] !== false && matchesFilter;
+    const show = deviceEnabled(d) && matchesFilter;
     const wasHidden = wrap.classList.contains('is-hidden');
     wrap.classList.toggle('is-hidden', !show);
     const { iframe } = getDeviceRefs(wrap);
@@ -924,9 +996,9 @@ function loadUrl(opts = {}) {
   // every device's URL bar overlay.
   applyScale();
 
-  // Layer 3: any live QA session windows should follow the URL change
-  // so the user's manual QA pass stays in sync with the toolbar input.
-  if (qaSessionApi?.broadcastUrl) qaSessionApi.broadcastUrl(url);
+  // Navigate any live Playwright windows so they follow the toolbar URL
+  // instead of stranding the user on whatever page each was launched at.
+  if (viewportsApi?.broadcastUrl) viewportsApi.broadcastUrl(url);
 
   // Layer 6: re-highlight the active environment chip if the URL's
   // origin matches one of the saved environments.
@@ -946,10 +1018,10 @@ async function addBookmark() {
   state.bookmarks.push({ label, url });
   saveState();
   buildSidebar();
+  // Devices tab has its own bookmarks strip; refresh so the chip appears
+  // immediately whichever tab the user is on.
+  viewportsApi?.renderBookmarks?.();
   flash(`Bookmarked: ${label}`);
-  // The sidebar (where bookmarks live) is hidden in non-Preview modes.
-  // Snap back so the user actually sees the new entry land.
-  if (state.mode !== 'preview') setMode('preview');
 }
 
 // ── Settings panel ──────────────────────────────────────────────────
@@ -1266,50 +1338,6 @@ function clearRecent() {
 }
 
 // ── Wire events ─────────────────────────────────────────────────────
-// ── Open externally ──────────────────────────────────────────────────
-// Tauri's WebView only runs one engine (WKWebView on macOS). For bugs
-// that need a real engine (iOS Safari quirks, Blink/Gecko behaviour),
-// punt the URL out to the real app. iOS Simulator runs actual iPadOS/iOS
-// Safari in its own window — closest we can get to "real device testing"
-// without paying for BrowserStack.
-const openExternalWrap = document.querySelector('.js-rt-open-external');
-const openExternalTrigger = document.querySelector('.js-rt-open-external-trigger');
-const openExternalMenu = document.querySelector('.js-rt-open-external-menu');
-
-if (openExternalTrigger) {
-  openExternalTrigger.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const isOpen = !openExternalMenu.hidden;
-    openExternalMenu.hidden = isOpen;
-    openExternalTrigger.setAttribute('aria-expanded', String(!isOpen));
-  });
-
-  // Click outside closes
-  document.addEventListener('click', (e) => {
-    if (!openExternalMenu.hidden && !openExternalWrap.contains(e.target)) {
-      openExternalMenu.hidden = true;
-      openExternalTrigger.setAttribute('aria-expanded', 'false');
-    }
-  });
-
-  document.querySelectorAll('.rt-open-external__item').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const target = btn.dataset.target;
-      openExternalMenu.hidden = true;
-      openExternalTrigger.setAttribute('aria-expanded', 'false');
-      const url = normaliseUrl(urlInput.value);
-      if (!url) { flash('Load a URL first.', true); return; }
-      try {
-        if (target === 'ios-simulator') flash('Launching iOS Simulator… this can take a few seconds.');
-        await invoke('open_externally', { target, url });
-        if (target !== 'ios-simulator') flash(`Opened in ${btn.textContent.trim().split(/\s+/)[0]}.`);
-      } catch (err) {
-        flash(String(err), true);
-      }
-    });
-  });
-}
-
 loadBtn.addEventListener('click', () => loadUrl());
 refreshBtn.addEventListener('click', () => loadUrl());
 bookmarkBtn.addEventListener('click', addBookmark);
@@ -1629,17 +1657,11 @@ if (envAdd) envAdd.addEventListener('click', () => {
 // mode is active.
 const modeButtons = document.querySelectorAll('.js-rt-mode');
 const previewBody = document.querySelector('.js-rt-body-preview');
-const crossBrowserBody = document.querySelector('.js-rt-body-cross-browser');
-const qaSessionBody = document.querySelector('.js-rt-body-qa-session');
-const prelaunchBody = document.querySelector('.js-rt-body-prelaunch');
-const aiTestBody = document.querySelector('.js-rt-body-ai-test');
+const viewportsBody = document.querySelector('.js-rt-body-viewports');
 const secondaryToolbar = document.querySelector('.rt-toolbar--secondary');
-let crossBrowserApi = null;
-let qaSessionApi = null;
-let prelaunchApi = null;
-let aiTestApi = null;
+let viewportsApi = null;
 
-const MODES = new Set(['preview', 'cross-browser', 'qa-session', 'prelaunch', 'ai-test']);
+const MODES = new Set(['preview', 'viewports']);
 
 function setMode(next) {
   if (!MODES.has(next)) return;
@@ -1651,13 +1673,9 @@ function setMode(next) {
     b.setAttribute('aria-selected', String(active));
   });
   previewBody.hidden = next !== 'preview';
-  crossBrowserBody.hidden = next !== 'cross-browser';
-  qaSessionBody.hidden = next !== 'qa-session';
-  prelaunchBody.hidden = next !== 'prelaunch';
-  aiTestBody.hidden = next !== 'ai-test';
+  viewportsBody.hidden = next !== 'viewports';
   if (secondaryToolbar) secondaryToolbar.hidden = next !== 'preview';
-  if (next === 'cross-browser' && crossBrowserApi?.onActivate) crossBrowserApi.onActivate();
-  if (next === 'qa-session' && qaSessionApi?.refreshSessions) qaSessionApi.refreshSessions();
+  if (next === 'viewports' && viewportsApi?.refreshSessions) viewportsApi.refreshSessions();
 }
 
 modeButtons.forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
@@ -1702,40 +1720,24 @@ function init() {
   wireContrastWidget(document);
   renderWorkspaces();
 
-  // Mount the cross-browser tab. The container exists in index.html but is
-  // hidden until setMode('cross-browser') reveals it. Building eagerly so
-  // the listeners attach once and survive tab switches.
-  crossBrowserApi = initCrossBrowser({
-    container: crossBrowserBody,
+  // QA Viewports tab — headed Playwright launcher fanned out over the
+  // 12-device Asana QA matrix. Each card launches a real browser sized
+  // to the viewport's width × height; "Screenshot all live" dumps PNGs
+  // to a fresh Desktop folder for drag-into-Claude-Code debugging.
+  viewportsApi = initViewports({
+    container: viewportsBody,
     getCurrentUrl: () => state.url,
     getAuth: (host) => state.auth[host] ? { username: state.auth[host].user, password: state.auth[host].pass } : null,
     allDevices,
-  });
-
-  // Layer 3 — QA Session tab. Same eager-mount pattern.
-  qaSessionApi = initQaSession({
-    container: qaSessionBody,
-    getCurrentUrl: () => state.url,
-    getAuth: (host) => state.auth[host] ? { username: state.auth[host].user, password: state.auth[host].pass } : null,
-    allDevices,
-    setMode,
-    getQaSessionState: () => state.qaSession,
-    setQaSessionState: (next) => { state.qaSession = { ...state.qaSession, ...next }; saveState(); },
-  });
-
-  // Layer 5 — Pre-Launch tab.
-  prelaunchApi = initPrelaunch({
-    container: prelaunchBody,
-    getCurrentUrl: () => state.url,
-    getAuth: (host) => state.auth[host] ? { username: state.auth[host].user, password: state.auth[host].pass } : null,
-  });
-
-  // Layer 7 — AI Test Runner tab.
-  aiTestApi = initAiTest({
-    container: aiTestBody,
-    getCurrentUrl: () => state.url,
-    getAuth: (host) => state.auth[host] ? { username: state.auth[host].user, password: state.auth[host].pass } : null,
-    allDevices,
+    getPrefs: () => state.viewports,
+    setPrefs: (next) => { state.viewports = { ...state.viewports, ...next }; saveState(); },
+    getBookmarks: () => state.bookmarks,
+    loadBookmark: (url) => { urlInput.value = url; loadUrl(); },
+    deleteBookmark: (i) => {
+      state.bookmarks.splice(i, 1);
+      saveState();
+      buildSidebar();
+    },
   });
 
   setMode(state.mode || 'preview');
