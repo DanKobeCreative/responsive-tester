@@ -46,18 +46,16 @@ async function readStdinJsonOnce() {
 
 function launchArgsFor(engineName, position, fit, viewport) {
   const args = [];
-  // Always size the OS window to match the (possibly fitted) viewport.
-  // Without this, Chromium and Firefox open at their default ~600px-wide
-  // window and render the page on the left, leaving dead browser area to
-  // the right. WebKit happens to fit naturally so we leave it alone.
+  // OS window size — match the (possibly fitted) viewport. Chrome's
+  // macOS minimum window width (~500px) will clamp this on small
+  // mobile viewports; CDP centering downstream handles the resulting
+  // gap. For viewports ≥ the platform minimum, this gives a tight
+  // viewport-matching window.
   const win = fit?.scaledWindow || { width: viewport.width, height: viewport.height };
   if (engineName === 'chromium') {
     if (position) args.push(`--window-position=${position.x},${position.y}`);
-    // +90 ≈ tabs + address bar height so the page area lands at viewport.
     args.push(`--window-size=${win.width},${win.height + 90}`);
   } else if (engineName === 'firefox') {
-    // Firefox CLI: separate -width / -height flags, value follows arg.
-    // +80 ≈ tabs + URL bar height in Firefox's default chrome.
     args.push('-width', String(win.width), '-height', String(win.height + 80));
   }
   return args;
@@ -224,25 +222,40 @@ async function run() {
   const context = await browser.newContext(contextOpts);
   const page = await context.newPage();
 
-  // Chromium: only intervene for fit-to-screen (CDP scale to shrink
-  // bigger-than-screen viewports). For normal launches we trust
-  // --window-size from launchArgsFor and accept that Chrome's macOS
-  // minimum window width (~500px) leaves a gap on tiny mobile
-  // viewports. Past attempts to "scale up to fill" backfired —
-  // setWindowBounds clamped the window smaller than expected, and
-  // shrinking the window makes everything visually tiny.
-  if (fit && config.engine === 'chromium') {
+  // Chromium: CDP setDeviceMetricsOverride. Two cases:
+  //   - fit-to-screen: scale < 1 to shrink larger-than-screen viewports.
+  //   - default: if Chrome's window opened wider than the viewport
+  //     (small mobile widths under Chrome's macOS min), use the
+  //     `viewport` sub-rect param to centre the rendering — a gap on
+  //     both sides reads cleaner than one big gap on the right.
+  if (config.engine === 'chromium') {
     try {
       const client = await context.newCDPSession(page);
-      await client.send('Emulation.setDeviceMetricsOverride', {
+      const overrides = {
         width: config.viewport.width,
         height: config.viewport.height,
         deviceScaleFactor: 2,
         mobile: config.viewport.type !== 'desktop',
-        scale: fit.scale,
-      });
+      };
+      if (fit) {
+        overrides.scale = fit.scale;
+      } else {
+        const { bounds } = await client.send('Browser.getWindowForTarget');
+        const browserWidth = bounds?.width || config.viewport.width;
+        if (browserWidth > config.viewport.width) {
+          const x = Math.floor((browserWidth - config.viewport.width) / 2);
+          overrides.viewport = {
+            x,
+            y: 0,
+            width: config.viewport.width,
+            height: config.viewport.height,
+            scale: 1,
+          };
+        }
+      }
+      await client.send('Emulation.setDeviceMetricsOverride', overrides);
     } catch (err) {
-      emit({ type: 'session-warning', message: `Chromium fit-to-screen failed: ${err.message ?? err}` });
+      emit({ type: 'session-warning', message: `Chromium setup failed: ${err.message ?? err}` });
     }
   }
 
