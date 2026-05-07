@@ -145,9 +145,14 @@ function appPathForPid(pid) {
 // engine's UI-side clamp and lets a 393-wide viewport actually live in
 // a 393-wide window. Best-effort: silent if Accessibility permission
 // isn't granted.
-function resizeBrowserWindow(engineName, width, height) {
+function resizeBrowserWindow(engineName, width, height, knownPid = null) {
   if (process.platform !== 'darwin') return;
-  const pid = findBrowserPid(engineName);
+  // Prefer the PID Playwright handed us (browser.process().pid) — that's
+  // deterministically the parent process which owns the window.
+  // findBrowserPid as a fallback uses pgrep which can return helpers /
+  // plugin-containers when multiple Firefox sessions are open, and AX
+  // calls on those silently no-op.
+  const pid = knownPid || findBrowserPid(engineName);
   if (!pid) return;
   try {
     spawnSync(
@@ -164,14 +169,14 @@ function resizeBrowserWindow(engineName, width, height) {
   }
 }
 
-function activateBrowserApp(engineName) {
+function activateBrowserApp(engineName, knownPid = null) {
   if (process.platform !== 'darwin') return;
   // Window registration with the macOS window server is async after
   // process launch. A short delay before we ask to focus avoids racing
   // ahead of the window appearing.
   sleepSync(300);
   try {
-    const pid = findBrowserPid(engineName);
+    const pid = knownPid || findBrowserPid(engineName);
     if (!pid) return;
 
     // Path 1: open -a — the friendliest route, no permissions needed.
@@ -272,10 +277,17 @@ async function run() {
   });
 
   await navigate(page, config.url);
+
+  // Playwright's parent browser process — deterministically the window
+  // owner. Used for activate + resize so we don't have to pgrep and
+  // accidentally hit a helper / plugin-container PID (silent no-op for
+  // AX since helpers have no window).
+  const browserPid = browser.process()?.pid;
+
   // Initial OS-level activation. NOT repeated on later navigate commands
   // — yanking focus on every URL sync would feel obnoxious when the user
   // is intentionally working inside the Responsive Tester app.
-  activateBrowserApp(config.engine);
+  activateBrowserApp(config.engine, browserPid);
 
   // Bypass Chrome / Firefox's UI-side minimum window width via OS
   // window-size override (AppleScript / AX). macOS allows windows down
@@ -283,7 +295,7 @@ async function run() {
   // that doesn't re-validate, which is exactly the gap. WebKit has no
   // clamp so we leave it alone.
   if (!fit && (config.engine === 'chromium' || config.engine === 'firefox')) {
-    resizeBrowserWindow(config.engine, config.viewport.width, config.viewport.height + 90);
+    resizeBrowserWindow(config.engine, config.viewport.width, config.viewport.height + 90, browserPid);
   }
 
   // Chromium centering fallback — only if the OS window is still wider
