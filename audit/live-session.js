@@ -192,26 +192,15 @@ async function run() {
     headless: false,
     args: launchArgsFor(config.engine, config.position, fit, config.viewport),
   };
-  if (config.engine === 'firefox') {
-    // Firefox: pick devPixelsPerPx, the rendering ratio that scales the
-    // whole UI. Two cases:
-    //   1. fit-to-screen ON, viewport > screen: scale < 1 to shrink
-    //      (e.g. 2560-wide page at 0.5 = 1280 device pixels).
-    //   2. viewport below Firefox's macOS minimum window width
-    //      (~450px): scale > 1 so the page fills the (clamped) window
-    //      instead of leaving a gap on the right.
-    const FF_MIN_WINDOW = 450;
-    let dpp = null;
-    if (fit) {
-      dpp = fit.scale;
-    } else if (config.viewport.width < FF_MIN_WINDOW) {
-      dpp = FF_MIN_WINDOW / config.viewport.width;
-    }
-    if (dpp != null) {
-      launchOpts.firefoxUserPrefs = {
-        'layout.css.devPixelsPerPx': dpp.toString(),
-      };
-    }
+  if (fit && config.engine === 'firefox') {
+    // Fit-to-screen for Firefox: devPixelsPerPx scales the entire UI
+    // rendering — a 2560-wide page rendered at 0.5 occupies 1280 device
+    // pixels. devPixelsPerPx affects rendering density only, NOT window
+    // size, so we can't use it to fix the sub-min-width gap on tiny
+    // mobile viewports — that's accepted as a platform limitation.
+    launchOpts.firefoxUserPrefs = {
+      'layout.css.devPixelsPerPx': fit.scale.toString(),
+    };
   }
 
   const browser = await launcher.launch(launchOpts);
@@ -235,57 +224,25 @@ async function run() {
   const context = await browser.newContext(contextOpts);
   const page = await context.newPage();
 
-  // Chromium: post-launch window sizing + scale to eliminate gaps.
-  // Chrome on macOS clamps the OS window to a minimum width (~500px)
-  // regardless of --window-size or CDP setWindowBounds. Below that
-  // minimum, the page renders at the correct viewport but in the
-  // top-left of a wider window, leaving an empty bar to the right.
-  // Our compromise: after the window settles at whatever size Chrome
-  // allowed, query the actual bounds and apply CDP `scale` to make the
-  // rendered surface visually fill the window. The page still lays out
-  // at the requested viewport (responsive CSS gets the right width);
-  // we're just zooming the rendered output to fill the chrome.
-  if (config.engine === 'chromium') {
+  // Chromium: only intervene for fit-to-screen (CDP scale to shrink
+  // bigger-than-screen viewports). For normal launches we trust
+  // --window-size from launchArgsFor and accept that Chrome's macOS
+  // minimum window width (~500px) leaves a gap on tiny mobile
+  // viewports. Past attempts to "scale up to fill" backfired —
+  // setWindowBounds clamped the window smaller than expected, and
+  // shrinking the window makes everything visually tiny.
+  if (fit && config.engine === 'chromium') {
     try {
       const client = await context.newCDPSession(page);
-      const target = fit?.scaledWindow || { width: config.viewport.width, height: config.viewport.height };
-
-      // Best-effort window resize. Catch and ignore if Chrome clamps —
-      // we'll compensate via scale below.
-      const { windowId } = await client.send('Browser.getWindowForTarget');
-      try {
-        await client.send('Browser.setWindowBounds', {
-          windowId,
-          bounds: { width: target.width, height: target.height + 90 },
-        });
-      } catch { /* clamped; compensate */ }
-
-      // Re-read actual bounds after the resize attempt.
-      const after = await client.send('Browser.getWindowForTarget');
-      const actualWidth = after?.bounds?.width || target.width;
-
-      // Pick the rendering scale. fit-to-screen uses scale < 1 (shrink
-      // big viewports onto small screens). Otherwise, if Chrome's clamp
-      // left the window wider than the viewport, scale > 1 to fill the
-      // gap. If the window matches, scale = 1 (no-op).
-      let scale = 1;
-      if (fit) {
-        scale = fit.scale;
-      } else if (actualWidth > config.viewport.width) {
-        scale = actualWidth / config.viewport.width;
-      }
-
-      if (scale !== 1) {
-        await client.send('Emulation.setDeviceMetricsOverride', {
-          width: config.viewport.width,
-          height: config.viewport.height,
-          deviceScaleFactor: 2,
-          mobile: config.viewport.type !== 'desktop',
-          scale,
-        });
-      }
+      await client.send('Emulation.setDeviceMetricsOverride', {
+        width: config.viewport.width,
+        height: config.viewport.height,
+        deviceScaleFactor: 2,
+        mobile: config.viewport.type !== 'desktop',
+        scale: fit.scale,
+      });
     } catch (err) {
-      emit({ type: 'session-warning', message: `Chromium window/scale setup failed: ${err.message ?? err}` });
+      emit({ type: 'session-warning', message: `Chromium fit-to-screen failed: ${err.message ?? err}` });
     }
   }
 
