@@ -221,20 +221,33 @@ async function run() {
   const context = await browser.newContext(contextOpts);
   const page = await context.newPage();
 
-  // Chromium: apply CDP scale so the rendered surface visually shrinks
-  // inside the (already scaled) OS window.
-  if (fit && config.engine === 'chromium') {
+  // Chromium: post-launch window-size enforcement + CDP scale.
+  // --window-size at launch is clamped by Chrome's minimum window width
+  // on macOS (~500px), leaving a gap on small mobile viewports. CDP's
+  // Browser.setWindowBounds runs after the window exists and is more
+  // aggressive about honouring the requested size. If Chrome still
+  // refuses, the gap is a platform limitation we can't paper over
+  // without --app mode (which strips the URL bar).
+  if (config.engine === 'chromium') {
     try {
       const client = await context.newCDPSession(page);
-      await client.send('Emulation.setDeviceMetricsOverride', {
-        width: config.viewport.width,
-        height: config.viewport.height,
-        deviceScaleFactor: 2,
-        mobile: config.viewport.type !== 'desktop',
-        scale: fit.scale,
+      const target = fit?.scaledWindow || { width: config.viewport.width, height: config.viewport.height };
+      const { windowId } = await client.send('Browser.getWindowForTarget');
+      await client.send('Browser.setWindowBounds', {
+        windowId,
+        bounds: { width: target.width, height: target.height + 90 },
       });
+      if (fit) {
+        await client.send('Emulation.setDeviceMetricsOverride', {
+          width: config.viewport.width,
+          height: config.viewport.height,
+          deviceScaleFactor: 2,
+          mobile: config.viewport.type !== 'desktop',
+          scale: fit.scale,
+        });
+      }
     } catch (err) {
-      emit({ type: 'session-warning', message: `Chromium fit-to-screen failed: ${err.message ?? err}` });
+      emit({ type: 'session-warning', message: `Chromium window resize failed: ${err.message ?? err}` });
     }
   }
 

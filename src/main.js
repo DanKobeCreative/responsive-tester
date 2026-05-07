@@ -107,7 +107,8 @@ const defaults = () => ({
   sidebarHidden: false,
   // Active workspace mode: 'preview' (the iframe grid) | 'viewports'
   // (headed Playwright launcher over the canonical 12-device QA matrix).
-  mode: 'preview',
+  // Devices is the day-to-day tab — open there by default.
+  mode: 'viewports',
   // Persisted Viewports tab toggles. `fitToScreen` defaults to true so
   // wide viewports (1920+, QHD) shrink to fit the host display on first
   // launch; `fullPage` defaults to false (visible viewport only).
@@ -984,17 +985,21 @@ function loadUrl(opts = {}) {
     clearPanelCache();
   }
 
-  // Staggered load: push each visible frame into the queue at concurrency 4.
-  loadQueue.clear();
-  grid.querySelectorAll('.rt-device:not(.is-hidden)').forEach((wrap) => {
-    const iframe = wrap.querySelector('.rt-device__frame');
-    const isDark = wrap.dataset.variant === 'dark';
-    loadQueue.add(() => loadFrame(iframe, wrap, url, isDark));
-  });
-
-  // Refresh simulated browser-chrome labels so the new host renders in
-  // every device's URL bar overlay.
-  applyScale();
+  // Iframes are a Preview-only concern. When the user is on Devices,
+  // Loading the URL should just save state + broadcast to live windows;
+  // hammering 12+ iframes in the background is wasted work and uses
+  // bandwidth the user didn't ask for.
+  if (state.mode === 'preview') {
+    loadQueue.clear();
+    grid.querySelectorAll('.rt-device:not(.is-hidden)').forEach((wrap) => {
+      const iframe = wrap.querySelector('.rt-device__frame');
+      const isDark = wrap.dataset.variant === 'dark';
+      loadQueue.add(() => loadFrame(iframe, wrap, url, isDark));
+    });
+    // Refresh simulated browser-chrome labels so the new host renders in
+    // every device's URL bar overlay.
+    applyScale();
+  }
 
   // Navigate any live Playwright windows so they follow the toolbar URL
   // instead of stranding the user on whatever page each was launched at.
@@ -1682,6 +1687,10 @@ function setMode(next) {
     el.hidden = next !== 'preview';
   });
   if (next === 'viewports' && viewportsApi?.refreshSessions) viewportsApi.refreshSessions();
+  // Switching back to Preview after spending time on Devices: the iframe
+  // grid was deliberately skipped during URL loads, so the frames are
+  // empty. Trigger a load now so the user sees the current URL.
+  if (next === 'preview' && state.url) loadUrl({ skipStateUpdate: true });
 }
 
 modeButtons.forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
