@@ -109,11 +109,11 @@ const defaults = () => ({
   // (headed Playwright launcher over the canonical 12-device QA matrix).
   // Devices is the day-to-day tab — open there by default.
   mode: 'viewports',
-  // Persisted Viewports tab toggles. `fitToScreen` defaults to true so
-  // wide viewports (1920+, QHD) shrink to fit the host display on first
-  // launch; `fullPage` defaults to false (visible viewport only).
+  // Persisted Viewports tab toggles. Both default off — fit-to-screen
+  // only works cleanly on Chromium and distorts Firefox/WebKit, so it's
+  // opt-in rather than always-on.
   viewports: {
-    fitToScreen: true,
+    fitToScreen: false,
     fullPage: false,
   },
   // Layer 6: named environments for one-click URL-origin switching.

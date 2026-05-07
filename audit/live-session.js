@@ -205,29 +205,22 @@ async function run() {
   const launcher = ENGINES[config.engine];
   if (!launcher) throw new Error(`Unknown engine: ${config.engine}`);
 
-  // Fit-to-screen: when on and the viewport overflows the host display,
-  // we shrink the rendered surface to fit. Chromium uses CDP scale +
-  // --window-size; Firefox uses layout.css.devPixelsPerPx; WebKit has
-  // no equivalent so we emit a warning and launch unscaled.
-  const fit = computeFit(config.viewport, config);
-  if (fit && config.engine === 'webkit') {
-    emit({ type: 'session-warning', message: `WebKit doesn't support fit-to-screen; the ${config.viewport.width}×${config.viewport.height} window will overflow the display.` });
+  // Fit-to-screen: shrinks oversized viewports to fit the host display.
+  // Only Chromium has a clean way to do this (CDP `Emulation.scale`).
+  // Firefox's devPixelsPerPx scales the whole UI in distorted ways, so
+  // we don't bother. WebKit has no equivalent at all. Both warn + skip.
+  const rawFit = computeFit(config.viewport, config);
+  if (rawFit && config.engine !== 'chromium') {
+    const engineLabel = config.engine === 'webkit' ? 'WebKit' : 'Firefox';
+    emit({ type: 'session-warning', message: `${engineLabel} doesn't support fit-to-screen; the ${config.viewport.width}×${config.viewport.height} window will overflow the display.` });
   }
+  // From here on, `fit` is the engine-effective fit — null for non-Chromium.
+  const fit = config.engine === 'chromium' ? rawFit : null;
 
   const launchOpts = {
     headless: false,
     args: launchArgsFor(config.engine, config.position, fit, config.viewport),
   };
-  if (fit && config.engine === 'firefox') {
-    // Fit-to-screen for Firefox: devPixelsPerPx scales the entire UI
-    // rendering — a 2560-wide page rendered at 0.5 occupies 1280 device
-    // pixels. devPixelsPerPx affects rendering density only, NOT window
-    // size, so we can't use it to fix the sub-min-width gap on tiny
-    // mobile viewports — that's accepted as a platform limitation.
-    launchOpts.firefoxUserPrefs = {
-      'layout.css.devPixelsPerPx': fit.scale.toString(),
-    };
-  }
 
   const contextOpts = {
     viewport: { width: config.viewport.width, height: config.viewport.height },
