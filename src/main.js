@@ -1362,7 +1362,7 @@ function clearRecent() {
 loadBtn.addEventListener('click', () => loadUrl());
 refreshBtn.addEventListener('click', () => loadUrl());
 bookmarkBtn.addEventListener('click', addBookmark);
-snapAllBtn.addEventListener('click', screenshotAll);
+snapAllBtn?.addEventListener('click', screenshotAll);
 settingsBtn.addEventListener('click', openSettings);
 settingsClose.addEventListener('click', closeSettings);
 inspectClose.addEventListener('click', closeInspect);
@@ -1702,7 +1702,12 @@ function setMode(next) {
   document.querySelectorAll('[data-preview-only]').forEach((el) => {
     el.hidden = next !== 'preview';
   });
-  if (next === 'viewports' && viewportsApi?.refreshSessions) viewportsApi.refreshSessions();
+  if (next === 'viewports' && viewportsApi?.refreshSessions) {
+    viewportsApi.refreshSessions();
+    // Re-check setup on tab activation — catches the case where the
+    // user installed Playwright between launches.
+    viewportsApi.checkSetup?.();
+  }
   // Switching back to Preview after spending time on Devices: the iframe
   // grid was deliberately skipped during URL loads, so the frames are
   // empty. Trigger a load now so the user sees the current URL.
@@ -1769,6 +1774,13 @@ function init() {
       saveState();
       buildSidebar();
     },
+    // Surface the live-session count on the Devices tab label so it's
+    // visible even when the user is on Preview. The CSS adds " · N live"
+    // when data-live-count > 0.
+    onLiveCountChange: (count) => {
+      const tab = document.querySelector('.js-rt-mode[data-mode="viewports"]');
+      if (tab) tab.dataset.liveCount = String(count);
+    },
   });
 
   setMode(state.mode || 'preview');
@@ -1783,15 +1795,29 @@ function init() {
 init();
 
 // ── Auto-updater ────────────────────────────────────────────────────
-async function checkForUpdate() {
+// Track whether the toast is up so the periodic re-check doesn't stack
+// duplicate toasts every 30 min while the user ignores the first one.
+let updateToastShown = false;
+
+async function checkForUpdate({ verbose = false } = {}) {
   try {
     const update = await check();
-    if (!update) return;
+    if (!update) {
+      if (verbose) flash('You\'re on the latest version.');
+      return;
+    }
+    if (updateToastShown) return;
+    updateToastShown = true;
     showUpdateToast(update);
   } catch (err) {
     console.warn('Update check failed:', err);
+    if (verbose) flash(`Update check failed: ${err}`, true);
   }
 }
+
+// Periodic re-check every 30 minutes so a release shipped after launch
+// gets noticed without an app restart.
+setInterval(() => checkForUpdate(), 30 * 60 * 1000);
 
 function showUpdateToast(update) {
   const toast = document.createElement('div');
@@ -1814,7 +1840,20 @@ function showUpdateToast(update) {
       toast.querySelector('.rt-update-toast__body').innerHTML = `<strong>Update failed</strong><span>${err}</span>`;
     }
   });
-  toast.querySelector('.js-rt-update-close').addEventListener('click', () => toast.remove());
+  toast.querySelector('.js-rt-update-close').addEventListener('click', () => {
+    toast.remove();
+    updateToastShown = false;
+  });
 }
+
+document.querySelector('.js-rt-check-updates')?.addEventListener('click', (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  checkForUpdate({ verbose: true }).finally(() => {
+    btn.disabled = false;
+    btn.textContent = 'Check for updates';
+  });
+});
 
 checkForUpdate();

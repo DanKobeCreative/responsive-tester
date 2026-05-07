@@ -51,6 +51,7 @@ export function initViewports({
   getBookmarks,
   loadBookmark,
   deleteBookmark,
+  onLiveCountChange,
 }) {
   const deviceMap = new Map(allDevices().map((d) => [d.id, d]));
   const prefs = (getPrefs && getPrefs()) || { fitToScreen: true, fullPage: false };
@@ -87,6 +88,16 @@ export function initViewports({
           <button class="rt-toolbar__btn js-rt-vp-close-all">Close all</button>
         </div>
       </header>
+      <div class="rt-viewports__setup js-rt-vp-setup" hidden>
+        <div class="rt-viewports__setup-head">
+          <strong>Playwright not installed</strong>
+          <p>Devices launches real Chrome / Firefox / Safari windows via Playwright. One-time install (~150 MB browser binaries, ~2 minutes).</p>
+        </div>
+        <div class="rt-viewports__setup-actions">
+          <button class="rt-toolbar__btn rt-toolbar__btn--primary js-rt-vp-setup-install">Install Playwright</button>
+          <span class="rt-viewports__setup-status js-rt-vp-setup-status" hidden></span>
+        </div>
+      </div>
       <div class="rt-viewports__bookmarks js-rt-vp-bookmarks"></div>
       ${grouped.map(renderGroup).join('')}
     </div>
@@ -98,10 +109,59 @@ export function initViewports({
   const fullPageEl = container.querySelector('.js-rt-vp-fullpage');
   const fitEl = container.querySelector('.js-rt-vp-fit');
   const bookmarksEl = container.querySelector('.js-rt-vp-bookmarks');
+  const setupEl = container.querySelector('.js-rt-vp-setup');
+  const setupInstallBtn = container.querySelector('.js-rt-vp-setup-install');
+  const setupStatusEl = container.querySelector('.js-rt-vp-setup-status');
+  const groupEls = [...container.querySelectorAll('.rt-viewports__group')];
 
   // Persist toggle state so it survives app restarts.
   fitEl?.addEventListener('change', () => setPrefs?.({ fitToScreen: fitEl.checked }));
   fullPageEl?.addEventListener('change', () => setPrefs?.({ fullPage: fullPageEl.checked }));
+
+  // ── Setup gate ──────────────────────────────────────────────────────
+  // Hides the device cards behind a one-click installer when Playwright
+  // isn't set up yet — fresh installs hit "Audit deps not installed"
+  // otherwise, with no recovery path.
+  let setupReady = true;
+  async function checkSetup() {
+    let status;
+    try {
+      status = await invoke('qa_check_setup');
+    } catch {
+      // qa_check_setup unavailable (older binary) — assume OK and let
+      // launch errors surface organically.
+      return true;
+    }
+    const ok = status.node_modules_installed && status.playwright_browsers_installed;
+    setupReady = ok;
+    if (setupEl) setupEl.hidden = ok;
+    if (bookmarksEl) bookmarksEl.hidden = !ok;
+    groupEls.forEach((g) => { g.hidden = !ok; });
+    return ok;
+  }
+
+  setupInstallBtn?.addEventListener('click', async () => {
+    setupInstallBtn.disabled = true;
+    if (setupStatusEl) {
+      setupStatusEl.hidden = false;
+      setupStatusEl.textContent = 'Starting install…';
+    }
+    let stop = () => {};
+    try {
+      stop = await listen('qa-install-progress', (e) => {
+        const msg = e.payload?.message || e.payload?.status || '';
+        if (setupStatusEl) setupStatusEl.textContent = msg;
+      });
+      await invoke('qa_install_audit_deps');
+      flash('Playwright installed.');
+      await checkSetup();
+    } catch (err) {
+      if (setupStatusEl) setupStatusEl.textContent = `Install failed: ${err}`;
+      setupInstallBtn.disabled = false;
+    } finally {
+      stop();
+    }
+  });
 
   // ── Launch ──────────────────────────────────────────────────────────
   async function launchOne(engine, viewportId) {
@@ -161,18 +221,30 @@ export function initViewports({
   // we wait for that event to arrive before opening Finder — otherwise
   // the user lands in an empty dir.
   const SHOT_TIMEOUT_MS = 8000;
+  // Re-entry guard so a second click (or an automated double-click)
+  // doesn't attach a parallel `qa-screenshot-saved` listener that races
+  // with the first batch's counter.
+  let capturing = false;
 
   async function captureSessions(sessionIds) {
+    if (capturing) {
+      flash('Capture already in progress…', true);
+      return;
+    }
     if (!sessionIds.length) {
       flash('No live sessions to screenshot.', true);
       return;
     }
+    capturing = true;
+    if (shotAllBtn) shotAllBtn.disabled = true;
     const fullPage = !!fullPageEl?.checked;
     let batchDir;
     try {
       batchDir = await invoke('screenshot_batch_start');
     } catch (err) {
       flash(`Could not create screenshot folder: ${err}`, true);
+      capturing = false;
+      if (shotAllBtn) shotAllBtn.disabled = liveSessions.size === 0;
       return;
     }
 
@@ -208,11 +280,18 @@ export function initViewports({
       stop();
     }
 
+    capturing = false;
+    if (shotAllBtn) shotAllBtn.disabled = liveSessions.size === 0;
+
     if (received === 0) {
       flash('No screenshots written — sidecar didn\'t respond.', true);
       return;
     }
-    flash(`Saved ${received}/${sessionIds.length} screenshot${received === 1 ? '' : 's'}. Revealing folder…`);
+    if (received < sessionIds.length) {
+      flash(`Saved ${received}/${sessionIds.length} (${sessionIds.length - received} failed). Revealing folder…`, true);
+    } else {
+      flash(`Saved ${received} screenshot${received === 1 ? '' : 's'}. Revealing folder…`);
+    }
     try { await invoke('reveal_in_finder', { path: batchDir }); }
     catch (err) { flash(`Could not open folder: ${err}`, true); }
   }
@@ -237,7 +316,9 @@ export function initViewports({
       ? '1 live session'
       : `${liveSessions.size} live sessions`;
     closeAllBtn.disabled = liveSessions.size === 0;
-    shotAllBtn.disabled = liveSessions.size === 0;
+    shotAllBtn.disabled = liveSessions.size === 0 || capturing;
+    // Bubble live-session count up so the tab label can show it.
+    onLiveCountChange?.(liveSessions.size);
 
     container.querySelectorAll('.rt-viewport-card').forEach((card) => {
       const vid = card.dataset.viewport;
@@ -327,21 +408,30 @@ export function initViewports({
   // the iframe grid reloads but the live windows stay on the old page.
   async function broadcastUrl(url) {
     if (!url || !liveSessions.size) return;
+    let ids;
     try {
-      const ids = await invoke('qa_list_sessions');
-      await Promise.all(
-        ids.map((id) => invoke('qa_navigate_session', { sessionId: id, url })),
-      );
+      ids = await invoke('qa_list_sessions');
     } catch (err) {
-      console.warn('[viewports] broadcastUrl failed:', err);
+      flash(`Couldn't list live sessions: ${err}`, true);
+      return;
+    }
+    const results = await Promise.allSettled(
+      ids.map((id) => invoke('qa_navigate_session', { sessionId: id, url })),
+    );
+    const failures = results.filter((r) => r.status === 'rejected').length;
+    if (failures > 0) {
+      flash(`${failures} live session${failures === 1 ? '' : 's'} couldn't navigate to ${url}.`, true);
     }
   }
 
   refreshSessions();
   renderLiveState();
   renderBookmarks();
+  // Don't await — we want the UI to render immediately, the setup
+  // banner pops in once the check resolves.
+  checkSetup();
 
-  return { refreshSessions, broadcastUrl, renderBookmarks };
+  return { refreshSessions, broadcastUrl, renderBookmarks, checkSetup };
 }
 
 function renderGroup({ type, items }) {
