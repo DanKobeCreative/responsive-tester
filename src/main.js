@@ -837,7 +837,22 @@ const loadQueue = new LoadQueue(4);
 const loadProgress = document.querySelector('.js-rt-load-progress');
 const loadProgressFill = document.querySelector('.js-rt-load-progress-fill');
 const loadProgressLabel = document.querySelector('.js-rt-load-progress-label');
+const loadCancelBtn = document.querySelector('.js-rt-load-cancel');
 let loadProgressHideTimer = null;
+
+// Abort any in-flight iframe loads. Used by the toast's × button when a
+// user accidentally hits Load and doesn't want to wait the ~10 seconds
+// for 12 iframes to settle.
+function cancelAllFrameLoads() {
+  loadQueue.clear();
+  grid.querySelectorAll('.rt-device .rt-device__frame').forEach((iframe) => {
+    // about:blank stops in-flight network requests on the iframe.
+    try { iframe.src = 'about:blank'; } catch { /* iframe gone */ }
+  });
+  if (loadProgressHideTimer) clearTimeout(loadProgressHideTimer);
+  if (loadProgress) loadProgress.hidden = true;
+}
+loadCancelBtn?.addEventListener('click', cancelAllFrameLoads);
 loadQueue.onProgress = ({ completed, total }) => {
   if (!loadProgress || !loadProgressFill || !loadProgressLabel) return;
   if (total === 0) { loadProgress.hidden = true; return; }

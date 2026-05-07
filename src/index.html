@@ -10,8 +10,8 @@
   <body>
     <div class="rt-app">
       <nav class="rt-modes" role="tablist" aria-label="Workspace mode">
-        <button class="rt-modes__tab is-active js-rt-mode" data-mode="preview" role="tab" aria-selected="true">Preview</button>
-        <button class="rt-modes__tab js-rt-mode" data-mode="viewports" role="tab" aria-selected="false">Devices</button>
+        <button class="rt-modes__tab is-active js-rt-mode" data-mode="viewports" role="tab" aria-selected="true">Devices</button>
+        <button class="rt-modes__tab js-rt-mode" data-mode="preview" role="tab" aria-selected="false">Preview</button>
       </nav>
       <div class="rt-toolbar">
         <input
@@ -109,6 +109,7 @@
     <div class="rt-load-progress js-rt-load-progress" hidden>
       <div class="rt-load-progress__bar"><div class="rt-load-progress__fill js-rt-load-progress-fill"></div></div>
       <div class="rt-load-progress__label js-rt-load-progress-label">Loading…</div>
+      <button class="rt-load-progress__cancel js-rt-load-cancel" aria-label="Cancel load">×</button>
     </div>
 
     <!-- Floating restore buttons (only visible when their target is hidden) -->
