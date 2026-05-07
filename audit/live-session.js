@@ -139,6 +139,31 @@ function appPathForPid(pid) {
   return p && p.endsWith('.app') ? p : null;
 }
 
+// Force-resize the front window of the browser process via System Events.
+// macOS allows windows down to 75x75 at the OS level — if Chrome / Firefox
+// haven't asserted a setMinSize: on their NSWindow, this bypasses the
+// engine's UI-side clamp and lets a 393-wide viewport actually live in
+// a 393-wide window. Best-effort: silent if Accessibility permission
+// isn't granted.
+function resizeBrowserWindow(engineName, width, height) {
+  if (process.platform !== 'darwin') return;
+  const pid = findBrowserPid(engineName);
+  if (!pid) return;
+  try {
+    spawnSync(
+      'osascript',
+      [
+        '-e',
+        `tell application "System Events" to tell (first process whose unix id is ${pid}) to set size of window 1 to {${width}, ${height}}`,
+      ],
+      { stdio: 'ignore' },
+    );
+  } catch {
+    // Accessibility permission missing or window not yet registered —
+    // CDP centering downstream picks up the slack for Chromium.
+  }
+}
+
 function activateBrowserApp(engineName) {
   if (process.platform !== 'darwin') return;
   // Window registration with the macOS window server is async after
@@ -222,40 +247,22 @@ async function run() {
   const context = await browser.newContext(contextOpts);
   const page = await context.newPage();
 
-  // Chromium: CDP setDeviceMetricsOverride. Two cases:
-  //   - fit-to-screen: scale < 1 to shrink larger-than-screen viewports.
-  //   - default: if Chrome's window opened wider than the viewport
-  //     (small mobile widths under Chrome's macOS min), use the
-  //     `viewport` sub-rect param to centre the rendering — a gap on
-  //     both sides reads cleaner than one big gap on the right.
-  if (config.engine === 'chromium') {
+  // Chromium fit-to-screen: scale rendering down for over-screen viewports.
+  // Applied here (before navigate) so the page lays out at the right scale
+  // from the first paint; centering for sub-min viewports is handled
+  // post-resize below.
+  if (fit && config.engine === 'chromium') {
     try {
       const client = await context.newCDPSession(page);
-      const overrides = {
+      await client.send('Emulation.setDeviceMetricsOverride', {
         width: config.viewport.width,
         height: config.viewport.height,
         deviceScaleFactor: 2,
         mobile: config.viewport.type !== 'desktop',
-      };
-      if (fit) {
-        overrides.scale = fit.scale;
-      } else {
-        const { bounds } = await client.send('Browser.getWindowForTarget');
-        const browserWidth = bounds?.width || config.viewport.width;
-        if (browserWidth > config.viewport.width) {
-          const x = Math.floor((browserWidth - config.viewport.width) / 2);
-          overrides.viewport = {
-            x,
-            y: 0,
-            width: config.viewport.width,
-            height: config.viewport.height,
-            scale: 1,
-          };
-        }
-      }
-      await client.send('Emulation.setDeviceMetricsOverride', overrides);
+        scale: fit.scale,
+      });
     } catch (err) {
-      emit({ type: 'session-warning', message: `Chromium setup failed: ${err.message ?? err}` });
+      emit({ type: 'session-warning', message: `Chromium fit-to-screen failed: ${err.message ?? err}` });
     }
   }
 
@@ -270,6 +277,38 @@ async function run() {
   // — yanking focus on every URL sync would feel obnoxious when the user
   // is intentionally working inside the Responsive Tester app.
   activateBrowserApp(config.engine);
+
+  // Try to bypass Chrome/Firefox's UI-side minimum window width via OS
+  // window-size override. macOS allows windows down to 75x75 unless the
+  // app's NSWindow asserts a setMinSize:. Best-effort: silent if the
+  // browser ignores the request or Accessibility permission isn't granted.
+  if (!fit) {
+    resizeBrowserWindow(config.engine, config.viewport.width, config.viewport.height + 90);
+  }
+
+  // Chromium centering fallback — only if the OS window is still wider
+  // than the viewport after the AppleScript resize attempt. Splits the
+  // gap symmetrically so it reads as "device frame" rather than "page
+  // stuck on the left of a wider window."
+  if (!fit && config.engine === 'chromium') {
+    try {
+      const client = await context.newCDPSession(page);
+      const { bounds } = await client.send('Browser.getWindowForTarget');
+      const browserWidth = bounds?.width || config.viewport.width;
+      if (browserWidth > config.viewport.width) {
+        const x = Math.floor((browserWidth - config.viewport.width) / 2);
+        await client.send('Emulation.setDeviceMetricsOverride', {
+          width: config.viewport.width,
+          height: config.viewport.height,
+          deviceScaleFactor: 2,
+          mobile: config.viewport.type !== 'desktop',
+          viewport: { x, y: 0, width: config.viewport.width, height: config.viewport.height, scale: 1 },
+        });
+      }
+    } catch (err) {
+      emit({ type: 'session-warning', message: `Chromium centering failed: ${err.message ?? err}` });
+    }
+  }
 
   emit({
     type: 'session-ready',
