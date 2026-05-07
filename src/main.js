@@ -42,7 +42,7 @@ const DEFAULT_DEVICES = [
 // Ship-Ready synthetic widths -- see studio CLAUDE.md §15.2. Extends the
 // real device list with breakpoint-aligned and phone-landscape widths the
 // device matrix doesn't natively cover. Disabled by default; the
-// "Ship-Ready (17)" sidebar preset enables the canonical set.
+// "Ship-Ready (12)" sidebar preset enables the canonical set.
 const SHIP_READY_DEVICES = [
   { id: 'sr-narrow-320',     name: 'Narrow smoke',          w: 320,  h: 568,  type: 'mobile',  default_enabled: false },
   { id: 'sr-sm-640',         name: 'sm breakpoint',         w: 640,  h: 960,  type: 'mobile',  default_enabled: false },
@@ -54,27 +54,22 @@ const SHIP_READY_DEVICES = [
   { id: 'sr-2xl-1536',       name: '2xl breakpoint',        w: 1536, h: 864,  type: 'desktop', default_enabled: false },
 ];
 
-// Canonical Kobe Ship-Ready preset ids -- 17 viewports total. Mix of real
-// DEFAULT_DEVICES entries and SHIP_READY_DEVICES synthetic widths. Order
-// is narrow-to-wide for sidebar display.
+// Canonical Kobe Ship-Ready preset — 12 viewports. Same matrix the
+// Devices tab uses (see QA_VIEWPORTS in features/qa-viewports.js).
+// Every CSS breakpoint flip tested both sides + real-device anchors.
 const SHIP_READY_PRESET_IDS = [
-  'sr-narrow-320',     // 320
-  'z-fold-cover',      // 344
-  'galaxy-s24',        // 360
-  'iphone-se',         // 375
-  'iphone-16',         // 393
-  'iphone-17-pro-max', // 440
-  'sr-sm-640',         // 640
-  'sr-iphone-se-land', // 667
-  'sr-md-768',         // 768
-  'sr-iphone-16-land', // 852
-  'z-fold-open',       // 884
-  'sr-lg-1024',        // 1024
-  'macbook-air-13',    // 1280
-  'laptop-hd',         // 1366
-  'sr-mbp-1440',       // 1440
-  'full-hd',           // 1920
-  'qhd-1440p',         // 2560
+  'sr-narrow-320',     // 320  Narrow smoke / WCAG reflow
+  'iphone-16',         // 393  iPhone 13–17 standard
+  'iphone-17-pro-max', // 440  iPhone 17 Pro Max / widest phone
+  'sr-sm-640',         // 640  sm flip
+  'sr-md-768',         // 768  md flip / iPad Mini
+  'ipad-air-m3',       // 820  iPad / Air / Pro 11" current
+  'sr-lg-1024',        // 1024 lg flip / iPad Pro 11" portrait
+  'macbook-air-13',    // 1280 xl flip / MacBook Air 13"
+  'macbook-pro-14',    // 1512 MacBook Pro 14"
+  'sr-2xl-1536',       // 1536 2xl flip
+  'full-hd',           // 1920 Full HD
+  'qhd-1440p',         // 2560 QHD / retina
 ];
 
 const TYPE_LABEL = { mobile: 'Mobile', tablet: 'Tablet', desktop: 'Desktop' };
@@ -183,7 +178,7 @@ function deviceEnabled(d) {
 }
 
 // Apply a sidebar preset. 'ship-ready' enables the canonical
-// 17-viewport Kobe QA set (CLAUDE.md §15.2); 'defaults' resets every
+// 12-viewport Kobe QA set (matches Devices tab); 'defaults' resets every
 // device to its default_enabled value (real devices on, SR off).
 // Mutates state.enabled, persists, and re-renders sidebar + grid
 // visibility without rebuilding iframes.
@@ -296,7 +291,7 @@ function buildSidebar() {
     <div class="rt-sidebar__section">
       <div class="rt-sidebar__title">Presets</div>
       <div class="rt-sidebar__presets">
-        <button class="rt-sidebar__preset js-rt-preset" data-preset="ship-ready" title="Kobe Creative canonical 17-viewport QA matrix (CLAUDE.md §15.2)">Ship-Ready (17)</button>
+        <button class="rt-sidebar__preset js-rt-preset" data-preset="ship-ready" title="Kobe Creative canonical 12-viewport QA matrix — matches the Devices tab">Ship-Ready (12)</button>
         <button class="rt-sidebar__preset js-rt-preset" data-preset="defaults" title="Reset to per-device defaults">Defaults</button>
       </div>
     </div>
