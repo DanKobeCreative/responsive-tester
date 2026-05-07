@@ -25,16 +25,16 @@
         />
         <datalist id="rt-recent"></datalist>
         <button class="rt-toolbar__btn rt-toolbar__btn--primary js-rt-load">Load</button>
-        <button class="rt-toolbar__btn js-rt-refresh" title="Reload all frames (⌘R)">Refresh</button>
+        <button class="rt-toolbar__btn js-rt-refresh" title="Reload all frames (⌘R)" data-preview-only>Refresh</button>
         <button class="rt-toolbar__btn rt-toolbar__btn--icon js-rt-bookmark" title="Bookmark (⌘D)" aria-label="Bookmark" data-icon="bookmark"></button>
         <div class="rt-toolbar__envs js-rt-envs" hidden></div>
-        <div class="rt-toolbar__filter" role="tablist" aria-label="Device class filter">
+        <div class="rt-toolbar__filter" role="tablist" aria-label="Device class filter" data-preview-only>
           <button class="rt-toolbar__chip is-active js-rt-filter" data-filter="all" title="⌘0">All</button>
           <button class="rt-toolbar__chip js-rt-filter" data-filter="mobile" title="⌘1"><span class="rt-dot rt-dot--mobile"></span>Mobile</button>
           <button class="rt-toolbar__chip js-rt-filter" data-filter="tablet" title="⌘2"><span class="rt-dot rt-dot--tablet"></span>Tablet</button>
           <button class="rt-toolbar__chip js-rt-filter" data-filter="desktop" title="⌘3"><span class="rt-dot rt-dot--desktop"></span>Desktop</button>
         </div>
-        <label class="rt-toolbar__scale">
+        <label class="rt-toolbar__scale" data-preview-only>
           <span>Scale</span>
           <input type="range" min="20" max="100" step="5" value="40" list="rt-scale-snaps" class="rt-toolbar__scale-range js-rt-scale" />
           <datalist id="rt-scale-snaps">

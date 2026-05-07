@@ -2406,7 +2406,9 @@ body {
 
 .rt-viewports__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* auto-fit (not auto-fill) so existing cards stretch to fill the row
+     instead of leaving empty grid tracks on the right. */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
 }
 

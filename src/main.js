@@ -1675,6 +1675,12 @@ function setMode(next) {
   previewBody.hidden = next !== 'preview';
   viewportsBody.hidden = next !== 'viewports';
   if (secondaryToolbar) secondaryToolbar.hidden = next !== 'preview';
+  // Preview-only primary-toolbar controls (Refresh, filter chips, Scale).
+  // Hide them on Devices since they target the iframe grid, not the
+  // headed Playwright launcher.
+  document.querySelectorAll('[data-preview-only]').forEach((el) => {
+    el.hidden = next !== 'preview';
+  });
   if (next === 'viewports' && viewportsApi?.refreshSessions) viewportsApi.refreshSessions();
 }
 

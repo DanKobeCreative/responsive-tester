@@ -44,18 +44,22 @@ async function readStdinJsonOnce() {
   });
 }
 
-function launchArgsFor(engineName, position, fit) {
+function launchArgsFor(engineName, position, fit, viewport) {
   const args = [];
+  // Always size the OS window to match the (possibly fitted) viewport.
+  // Without this, Chromium and Firefox open at their default ~600px-wide
+  // window and render the page on the left, leaving dead browser area to
+  // the right. WebKit happens to fit naturally so we leave it alone.
+  const win = fit?.scaledWindow || { width: viewport.width, height: viewport.height };
   if (engineName === 'chromium') {
     if (position) args.push(`--window-position=${position.x},${position.y}`);
-    if (fit?.scaledWindow) {
-      // OS window size in actual pixels. +90 ≈ Chrome's chrome (tabs +
-      // address bar) so the page area lands at the scaled viewport.
-      args.push(`--window-size=${fit.scaledWindow.width},${fit.scaledWindow.height + 90}`);
-    }
+    // +90 ≈ tabs + address bar height so the page area lands at viewport.
+    args.push(`--window-size=${win.width},${win.height + 90}`);
+  } else if (engineName === 'firefox') {
+    // Firefox CLI: separate -width / -height flags, value follows arg.
+    // +80 ≈ tabs + URL bar height in Firefox's default chrome.
+    args.push('-width', String(win.width), '-height', String(win.height + 80));
   }
-  // Firefox: scaling is set via firefoxUserPrefs (devPixelsPerPx), not args.
-  // WebKit: no scale or position flag — accept OS default.
   return args;
 }
 
@@ -186,7 +190,7 @@ async function run() {
 
   const launchOpts = {
     headless: false,
-    args: launchArgsFor(config.engine, config.position, fit),
+    args: launchArgsFor(config.engine, config.position, fit, config.viewport),
   };
   if (fit && config.engine === 'firefox') {
     // devPixelsPerPx scales the entire UI rendering — a 2560-wide page

@@ -260,12 +260,25 @@ fn parse_cli_url() -> Option<String> {
 pub fn run() {
     let cli_url = parse_cli_url();
 
-    // Pick an unused port on startup and serve the built frontend from
-    // http://localhost:<port> via tauri-plugin-localhost. This replaces
-    // the default tauri://localhost scheme so the app shell is same-
-    // protocol (http) as the http://localhost:8080 sites we point it
-    // at. Without this, WKWebView blocks those iframes as mixed content.
-    let port = portpicker::pick_unused_port().expect("failed to find a free localhost port");
+    // Serve the built frontend from http://localhost:<port> via
+    // tauri-plugin-localhost. Replaces the default tauri://localhost so
+    // the app shell is same-protocol (http) as the http://localhost:8080
+    // sites we point it at — without this, WKWebView blocks those
+    // iframes as mixed content.
+    //
+    // CRITICAL: prefer a stable port across launches. WKWebView keys
+    // localStorage (and the rest of WebsiteData) by origin, including
+    // the port. Picking a random port on every launch means a fresh
+    // empty localStorage each time, so bookmarks / recent URLs / saved
+    // workspaces / Devices toggles never persist. 31415 is high enough
+    // to dodge most collisions; if it's taken we fall back to a random
+    // port and accept that single launch loses persisted state.
+    const PREFERRED_PORT: u16 = 31415;
+    let port = if portpicker::is_free(PREFERRED_PORT) {
+        PREFERRED_PORT
+    } else {
+        portpicker::pick_unused_port().expect("failed to find a free localhost port")
+    };
     let app_url = format!("http://localhost:{}", port);
 
     tauri::Builder::default()
