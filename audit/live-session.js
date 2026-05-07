@@ -13,11 +13,37 @@
 
 import { stdin } from 'node:process';
 import { spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
 import { chromium, firefox, webkit } from 'playwright';
 
 import { gotoStable } from './lib/playwright.js';
 
 const ENGINES = { chromium, firefox, webkit };
+
+// Set up a one-shot Firefox profile with userChrome.css that strips the
+// XUL #main-window min-width rule. This is the kevincox.ca trick — once
+// the XUL min-width is gone, nsCocoaWindow::SetSizeConstraints plumbs a
+// tiny minSize down to AppKit, and -width/-height args actually take
+// effect on small viewports. No Accessibility permission needed; no AX
+// resize needed downstream.
+async function prepareFirefoxProfile() {
+  const profileDir = await mkdtemp(path.join(os.tmpdir(), 'rt-ff-profile-'));
+  const chromeDir = path.join(profileDir, 'chrome');
+  await mkdir(chromeDir, { recursive: true });
+  await writeFile(
+    path.join(chromeDir, 'userChrome.css'),
+    ':root { min-width: 1rem !important; }\n',
+    'utf8',
+  );
+  await writeFile(
+    path.join(profileDir, 'user.js'),
+    'user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", true);\n',
+    'utf8',
+  );
+  return profileDir;
+}
 
 function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
@@ -226,8 +252,6 @@ async function run() {
     };
   }
 
-  const browser = await launcher.launch(launchOpts);
-
   const contextOpts = {
     viewport: { width: config.viewport.width, height: config.viewport.height },
     // Retina-quality rendering. The previous 1x default produced soft
@@ -244,8 +268,24 @@ async function run() {
     };
   }
 
-  const context = await browser.newContext(contextOpts);
-  const page = await context.newPage();
+  // Firefox uses launchPersistentContext with a custom profile so we can
+  // inject userChrome.css to remove the XUL min-width clamp. Other
+  // engines launch normally and a fresh context is created.
+  let browser = null;
+  let context;
+  let page;
+  if (config.engine === 'firefox') {
+    const profileDir = await prepareFirefoxProfile();
+    context = await firefox.launchPersistentContext(profileDir, {
+      ...launchOpts,
+      ...contextOpts,
+    });
+    page = context.pages()[0] || await context.newPage();
+  } else {
+    browser = await launcher.launch(launchOpts);
+    context = await browser.newContext(contextOpts);
+    page = await context.newPage();
+  }
 
   // Chromium fit-to-screen: scale rendering down for over-screen viewports.
   // Applied here (before navigate) so the page lays out at the right scale
@@ -278,11 +318,10 @@ async function run() {
   // is intentionally working inside the Responsive Tester app.
   activateBrowserApp(config.engine);
 
-  // Try to bypass Chrome/Firefox's UI-side minimum window width via OS
-  // window-size override. macOS allows windows down to 75x75 unless the
-  // app's NSWindow asserts a setMinSize:. Best-effort: silent if the
-  // browser ignores the request or Accessibility permission isn't granted.
-  if (!fit) {
+  // Bypass Chrome's UI-side minimum window width via OS window-size
+  // override. Firefox doesn't need this — userChrome.css already
+  // removed its min-width clamp. WebKit has no clamp to bypass.
+  if (!fit && config.engine === 'chromium') {
     resizeBrowserWindow(config.engine, config.viewport.width, config.viewport.height + 90);
   }
 
@@ -360,7 +399,13 @@ async function run() {
   async function cleanup() {
     if (cleaningUp) return;
     cleaningUp = true;
-    try { await browser.close(); } catch { /* already closing */ }
+    try {
+      // launchPersistentContext (Firefox) owns its browser internally;
+      // closing the context tears the browser down too. launch() (other
+      // engines) requires closing the browser handle directly.
+      if (browser) await browser.close();
+      else if (context) await context.close();
+    } catch { /* already closing */ }
     process.exit(0);
   }
   process.on('SIGTERM', cleanup);
