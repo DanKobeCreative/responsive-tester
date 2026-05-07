@@ -51,6 +51,7 @@ const SHIP_READY_DEVICES = [
   { id: 'sr-iphone-16-land', name: 'iPhone 16 landscape',   w: 852,  h: 393,  type: 'tablet',  default_enabled: false },
   { id: 'sr-lg-1024',        name: 'iPad Pro 11" / lg',     w: 1024, h: 1366, type: 'tablet',  default_enabled: false },
   { id: 'sr-mbp-1440',       name: 'MacBook Pro / 1440',    w: 1440, h: 900,  type: 'desktop', default_enabled: false },
+  { id: 'sr-2xl-1536',       name: '2xl breakpoint',        w: 1536, h: 864,  type: 'desktop', default_enabled: false },
 ];
 
 // Canonical Kobe Ship-Ready preset ids -- 17 viewports total. Mix of real

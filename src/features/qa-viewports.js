@@ -11,21 +11,22 @@ import { listen } from '@tauri-apps/api/event';
 
 import { escapeHtml, escapeAttr, flash, hostOf } from './utils.js';
 
-// Mirrors the 12 subtasks under "Responsive pass — 12 devices" in Asana.
-// IDs match DEFAULT_DEVICES in main.js so we share the underlying matrix.
+// Definitive 12-viewport QA matrix — every CSS breakpoint flip tested
+// both sides, real-device anchors at each band. IDs map to entries in
+// main.js DEFAULT_DEVICES + SHIP_READY_DEVICES.
 const QA_VIEWPORTS = [
-  { id: 'z-fold-cover',      note: '<xs' },
-  { id: 'iphone-se',         note: 'xs boundary' },
-  { id: 'iphone-16-pro',     note: 'xs→sm' },
-  { id: 'iphone-17-pro-max', note: 'widest phone, <sm' },
-  { id: 'ipad-mini-7',       note: 'sm→md' },
-  { id: 'ipad-air-m3',       note: 'md→lg' },
-  { id: 'z-fold-open',       note: 'md→lg, unusual aspect' },
-  { id: 'ipad-pro-13-m4',    note: 'lg→xl' },
-  { id: 'macbook-air-13',    note: 'xl boundary' },
-  { id: 'macbook-pro-14',    note: 'xl→2xl' },
-  { id: 'full-hd',           note: '2xl+' },
-  { id: 'qhd-1440p',         note: 'large retina' },
+  { id: 'sr-narrow-320',     note: 'narrow smoke / WCAG reflow' },
+  { id: 'iphone-16',         note: 'iPhone 13–17 standard' },
+  { id: 'iphone-17-pro-max', note: 'widest phone' },
+  { id: 'sr-sm-640',         note: 'sm flip' },
+  { id: 'sr-md-768',         note: 'md flip / iPad Mini' },
+  { id: 'ipad-air-m3',       note: 'iPad / Air / Pro 11" current' },
+  { id: 'sr-lg-1024',        note: 'lg flip / iPad Pro 11" portrait' },
+  { id: 'macbook-air-13',    note: 'xl flip / MacBook Air 13"' },
+  { id: 'macbook-pro-14',    note: 'MacBook Pro 14"' },
+  { id: 'sr-2xl-1536',       note: '2xl flip' },
+  { id: 'full-hd',           note: 'Full HD' },
+  { id: 'qhd-1440p',         note: 'QHD / retina' },
 ];
 
 const TYPE_LABEL = { mobile: 'Mobile', tablet: 'Tablet', desktop: 'Desktop' };
