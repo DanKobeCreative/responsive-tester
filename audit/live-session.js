@@ -13,9 +13,18 @@
 
 import { stdin } from 'node:process';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as pathJoin } from 'node:path';
 import { chromium, firefox, webkit } from 'playwright';
 
 import { gotoStable } from './lib/playwright.js';
+
+// Chromium-on-macOS UI minimum (BrowserViewLayout::GetMinimumSize). Below
+// this width a regular browser window can't physically shrink — we switch
+// to PWA app-mode launch (--app=URL via launchPersistentContext) which
+// uses Browser::TYPE_APP_POPUP, a window class without that clamp.
+const CHROMIUM_MIN_REGULAR_WIDTH = 520;
 
 const ENGINES = { chromium, firefox, webkit };
 
@@ -220,83 +229,93 @@ async function run() {
   // From here on, `fit` is the engine-effective fit — null for non-Chromium.
   const fit = config.engine === 'chromium' ? rawFit : null;
 
-  const launchOpts = {
-    headless: false,
-    args: launchArgsFor(config.engine, config.position, fit, config.viewport),
-  };
+  // Chromium narrow path: PWA app-mode window via launchPersistentContext.
+  // Regular Chromium browser windows hit BrowserViewLayout::GetMinimumSize
+  // (~500px) on macOS — neither Browser.setWindowBounds, AppleScript AX,
+  // nor --window-size can shrink past it. The app-popup window class used
+  // by --app=URL has no such clamp, but the flag only takes effect on the
+  // browser's startup window, which means launch() + newContext() is too
+  // late (Playwright's first window is already a regular browser window).
+  // launchPersistentContext IS the startup window, so --app= takes effect.
+  const targetWin = fit?.scaledWindow || { width: config.viewport.width, height: config.viewport.height };
+  const useAppMode = config.engine === 'chromium' && targetWin.width < CHROMIUM_MIN_REGULAR_WIDTH;
 
-  // CRITICAL for headed Chromium: pass viewport: null so Playwright skips
-  // its internal _updateViewport pipeline. That pipeline calls
-  // Browser.setWindowBounds to resize the OS window to viewport+insets,
-  // and on macOS Chrome clamps the result at its UI minimum (~500px).
-  // The visible effect is the window animating from the requested 320 up
-  // to the clamped ~500 — the "growing" we kept fighting. With null, we
-  // own the emulation and set Emulation.setDeviceMetricsOverride
-  // ourselves below; Chrome's OS window stays at its default size and
-  // the rendered viewport is pinned at config.viewport.
-  // Firefox / WebKit don't have this OS-resize coupling so they still
-  // use Playwright's normal viewport path.
-  const contextOpts = {
-    viewport: config.engine === 'chromium'
-      ? null
-      : { width: config.viewport.width, height: config.viewport.height },
-    // DPR 1 for LIVE sessions. macOS Retina displays handle pixel-density
-    // scaling at the OS layer, so setting DPR 2 here creates a double-
-    // scale artefact: the engine renders 2x content into the literal
-    // viewport-width OS window, squeezing 320px of content into ~160px
-    // of visible space. Headless screenshot capture (audit/cross-browser
-    // / capture pipelines) DOES need DPR 2 because there's no OS layer
-    // to upscale the PNG; that lives elsewhere.
-    deviceScaleFactor: 1,
-    ...(config.viewport.type !== 'desktop' ? { hasTouch: true } : {}),
-  };
-  if (config.auth?.username) {
-    contextOpts.httpCredentials = {
-      username: config.auth.username,
-      password: config.auth.password ?? '',
-    };
-  }
-
-  const browser = await launcher.launch(launchOpts);
-  const context = await browser.newContext(contextOpts);
-  const page = await context.newPage();
-
-  // Chromium: we own emulation entirely (newContext was passed
-  // viewport: null above to skip Playwright's _updateViewport pipeline).
-  // Two CDP calls:
-  //   1. Browser.setWindowBounds: size the OS window to the viewport when
-  //      the viewport is ≥ Chrome's macOS UI clamp (~500px). Below that,
-  //      the call would just be clamped, so we skip it and let the OS
-  //      window stay at Chrome's default — rendered viewport is still
-  //      pinned by (2) so the page lays out correctly with dead space
-  //      on the right.
-  //   2. Emulation.setDeviceMetricsOverride: pin the rendered viewport
-  //      to config.viewport. Re-applied on every top-frame navigation
-  //      because a stale override is the only thing that could ever
-  //      cause this to drift again.
+  let browser = null;
+  let context;
+  let page;
   let chromiumClient = null;
-  if (config.engine === 'chromium') {
-    try {
-      chromiumClient = await context.newCDPSession(page);
-      const applyOverride = async () => {
-        await chromiumClient.send('Emulation.setDeviceMetricsOverride', {
-          width: config.viewport.width,
-          height: config.viewport.height,
-          deviceScaleFactor: 1,
-          mobile: config.viewport.type !== 'desktop',
-          ...(fit ? { scale: fit.scale } : {}),
-        });
+
+  if (useAppMode) {
+    const userDataDir = mkdtempSync(pathJoin(tmpdir(), `rt-chrome-app-${process.pid}-`));
+    context = await chromium.launchPersistentContext(userDataDir, {
+      headless: false,
+      args: [
+        `--app=${config.url}`,
+        `--window-size=${targetWin.width},${targetWin.height}`,
+        ...(config.position ? [`--window-position=${config.position.x},${config.position.y}`] : []),
+      ],
+      viewport: null,
+      deviceScaleFactor: 1,
+      ...(config.viewport.type !== 'desktop' ? { hasTouch: true } : {}),
+      ...(config.auth?.username ? {
+        httpCredentials: { username: config.auth.username, password: config.auth.password ?? '' },
+      } : {}),
+    });
+    // The startup window opens with --app=URL preloaded; first page wins.
+    page = context.pages()[0] || await new Promise((resolve) => context.once('page', resolve));
+  } else {
+    // Regular Chromium / Firefox / WebKit launch path. For Chromium we
+    // pass viewport: null to skip Playwright's _updateViewport pipeline
+    // (verified at crPage.js:736 — no emulatedSize means early return,
+    // so no Browser.setWindowBounds firing behind our back). The OS
+    // window stays at Chrome's default and we own emulation via direct
+    // CDP calls below.
+    const launchOpts = {
+      headless: false,
+      args: launchArgsFor(config.engine, config.position, fit, config.viewport),
+    };
+    const contextOpts = {
+      viewport: config.engine === 'chromium'
+        ? null
+        : { width: config.viewport.width, height: config.viewport.height },
+      // DPR 1 for LIVE sessions — macOS Retina handles pixel scaling at
+      // the OS layer; DPR 2 here would squeeze rendered content.
+      // Headless capture pipelines set DPR 2 separately.
+      deviceScaleFactor: 1,
+      ...(config.viewport.type !== 'desktop' ? { hasTouch: true } : {}),
+    };
+    if (config.auth?.username) {
+      contextOpts.httpCredentials = {
+        username: config.auth.username,
+        password: config.auth.password ?? '',
       };
-      await applyOverride();
-      await chromiumClient.send('Page.enable');
-      chromiumClient.on('Page.frameNavigated', ({ frame }) => {
-        if (frame.parentId) return;
-        applyOverride().catch(() => {});
-      });
-      // Single OS window resize, only when Chrome won't clamp it. macOS
-      // Chrome clamps below ~500; allow a small buffer above that.
-      const targetWin = fit?.scaledWindow || { width: config.viewport.width, height: config.viewport.height };
-      if (targetWin.width >= 520) {
+    }
+
+    browser = await launcher.launch(launchOpts);
+    context = await browser.newContext(contextOpts);
+    page = await context.newPage();
+
+    // Chromium: own the emulation. Override pins rendered viewport (re-applied
+    // on every top-frame navigation as defence). Browser.setWindowBounds
+    // sizes the OS window only when target ≥ Chrome's clamp.
+    if (config.engine === 'chromium') {
+      try {
+        chromiumClient = await context.newCDPSession(page);
+        const applyOverride = async () => {
+          await chromiumClient.send('Emulation.setDeviceMetricsOverride', {
+            width: config.viewport.width,
+            height: config.viewport.height,
+            deviceScaleFactor: 1,
+            mobile: config.viewport.type !== 'desktop',
+            ...(fit ? { scale: fit.scale } : {}),
+          });
+        };
+        await applyOverride();
+        await chromiumClient.send('Page.enable');
+        chromiumClient.on('Page.frameNavigated', ({ frame }) => {
+          if (frame.parentId) return;
+          applyOverride().catch(() => {});
+        });
         try {
           const { windowId } = await chromiumClient.send('Browser.getWindowForTarget');
           await chromiumClient.send('Browser.setWindowBounds', {
@@ -306,10 +325,10 @@ async function run() {
               height: targetWin.height + 80,
             },
           });
-        } catch { /* best-effort, the override above is what matters */ }
+        } catch { /* best-effort */ }
+      } catch (err) {
+        emit({ type: 'session-warning', message: `Chromium device metrics override failed: ${err.message ?? err}` });
       }
-    } catch (err) {
-      emit({ type: 'session-warning', message: `Chromium device metrics override failed: ${err.message ?? err}` });
     }
   }
 
@@ -319,7 +338,14 @@ async function run() {
     cleanup().catch(() => {});
   });
 
-  await navigate(page, config.url);
+  // App-mode: --app=URL navigates the startup window already; skipping
+  // the second navigate avoids a redundant load and keeps app-mode UI
+  // chrome stable. Regular: navigate explicitly.
+  if (!useAppMode) {
+    await navigate(page, config.url);
+  } else {
+    try { await page.bringToFront(); } catch { /* best-effort */ }
+  }
   // Initial OS-level activation. NOT repeated on later navigate commands
   // — yanking focus on every URL sync would feel obnoxious when the user
   // is intentionally working inside the Responsive Tester app.
@@ -385,7 +411,13 @@ async function run() {
   async function cleanup() {
     if (cleaningUp) return;
     cleaningUp = true;
-    try { await browser.close(); } catch { /* already closing */ }
+    // launch() path returns a Browser; launchPersistentContext returns a
+    // BrowserContext that owns its own browser process. Either one's close()
+    // tears the lot down.
+    try {
+      if (browser) await browser.close();
+      else if (context) await context.close();
+    } catch { /* already closing */ }
     process.exit(0);
   }
   process.on('SIGTERM', cleanup);
