@@ -2185,11 +2185,27 @@ body {
 }
 
 /* ── Mode switcher ──────────────────────────────────────────────── */
+.rt-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.rt-version {
+  font-size: 11px;
+  color: var(--rt-text-muted, #888);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .rt-modes {
   display: flex;
   gap: 6px;
   padding: 6px;
-  margin-bottom: 10px;
   background: var(--rt-surface);
   border: 1px solid var(--rt-border);
   border-radius: 999px;

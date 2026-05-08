@@ -46,15 +46,21 @@ async function readStdinJsonOnce() {
 
 function launchArgsFor(engineName, position, fit, viewport) {
   const args = [];
-  // OS window size — match the (possibly fitted) viewport. Chrome's
-  // macOS minimum window width (~500px) will clamp this on small
-  // mobile viewports; AppleScript AX resize downstream bypasses the
-  // clamp where Accessibility permission is granted. For viewports ≥
-  // the platform minimum, this gives a tight viewport-matching window.
   const win = fit?.scaledWindow || { width: viewport.width, height: viewport.height };
   if (engineName === 'chromium') {
     if (position) args.push(`--window-position=${position.x},${position.y}`);
-    args.push(`--window-size=${win.width},${win.height + 90}`);
+    // Chromium-on-macOS-only behaviour: passing --window-size below its
+    // UI minimum (~500px) makes Chrome glitch. The window opens at the
+    // requested width briefly, then the toolbar/tab UI asserts itself
+    // and forces an animated grow-back to the minimum. With our CDP
+    // setDeviceMetricsOverride pinning the rendered viewport, we don't
+    // need the OS window to match — Chrome just opens at its default
+    // size and the page renders correctly inside it. Skipping
+    // --window-size kills the oscillation. For wide viewports we still
+    // pass it so the window opens roughly the right shape.
+    if (win.width >= 600) {
+      args.push(`--window-size=${win.width},${win.height + 90}`);
+    }
   } else if (engineName === 'firefox') {
     args.push('-width', String(win.width), '-height', String(win.height + 80));
   }
@@ -249,34 +255,34 @@ async function run() {
   const context = await browser.newContext(contextOpts);
   const page = await context.newPage();
 
-  // Chromium: pin the rendered viewport to config.viewport.width regardless
-  // of the OS window size. Two failure modes this is fighting:
-  //   1. Chrome's macOS minimum window width (~500px) clamps the OS window
-  //      so it can't physically be 320 wide. AppleScript AX is supposed to
-  //      bypass that, but on installs where the override doesn't take
-  //      (OS version, Accessibility permission missing, Chrome asserting
-  //      setMinSize: harder in newer builds), the page would otherwise
-  //      lay out at 500.
-  //   2. We previously used a viewport: { x, y, width, height } sub-rect
-  //      to centre the rendered page inside the wider window. Chrome's
-  //      compositor silently dropped that on scroll-driven layout changes,
-  //      causing the "jump after a couple of sections" bug.
-  //
-  // The override below sets only width/height/dpr/mobile — no clip, no
-  // scale. The page renders at config.viewport.width even when the OS
-  // window is stuck wider; the gap on the right is dead white space.
-  // Stable, no jumps, matches what the user is actually testing for.
-  // Applied before navigate so the first paint is at the right size.
+  // Chromium: pin the rendered viewport to config.viewport regardless of
+  // the OS window size. Chrome's macOS minimum (~500px) means small
+  // mobile viewports physically can't have a matching OS window; the page
+  // renders at the target width inside Chrome's clamp-default window with
+  // dead white space on the right. The override is also re-applied on
+  // every top-frame navigation as defence — Playwright's own bookkeeping
+  // mostly survives this, but defending the rendered width here means a
+  // single source of truth and zero room for the override to be lost.
+  let chromiumClient = null;
   if (config.engine === 'chromium') {
     try {
-      const client = await context.newCDPSession(page);
-      await client.send('Emulation.setDeviceMetricsOverride', {
-        width: config.viewport.width,
-        height: config.viewport.height,
-        deviceScaleFactor: 1,
-        mobile: config.viewport.type !== 'desktop',
-        ...(fit ? { scale: fit.scale } : {}),
+      chromiumClient = await context.newCDPSession(page);
+      const applyOverride = async () => {
+        await chromiumClient.send('Emulation.setDeviceMetricsOverride', {
+          width: config.viewport.width,
+          height: config.viewport.height,
+          deviceScaleFactor: 1,
+          mobile: config.viewport.type !== 'desktop',
+          ...(fit ? { scale: fit.scale } : {}),
+        });
+      };
+      await applyOverride();
+      // Re-apply on every top-frame navigation. Subframes don't matter.
+      chromiumClient.on('Page.frameNavigated', ({ frame }) => {
+        if (frame.parentId) return;
+        applyOverride().catch(() => {});
       });
+      await chromiumClient.send('Page.enable');
     } catch (err) {
       emit({ type: 'session-warning', message: `Chromium device metrics override failed: ${err.message ?? err}` });
     }
@@ -294,12 +300,13 @@ async function run() {
   // is intentionally working inside the Responsive Tester app.
   activateBrowserApp(config.engine);
 
-  // Bypass Chrome / Firefox's UI-side minimum window width via OS
-  // window-size override (AppleScript / AX). macOS allows windows down
-  // to 75x75 unless setMinSize: blocks it; AX writes go through a path
-  // that doesn't re-validate, which is exactly the gap. WebKit has no
-  // clamp so we leave it alone.
-  if (!fit && (config.engine === 'chromium' || config.engine === 'firefox')) {
+  // Firefox-only OS window-size override via AppleScript / AX. Firefox
+  // doesn't assert setMinSize: hard so AX writes actually shrink the
+  // window. Chromium intentionally OMITTED — competing with Chrome's UI
+  // minimum produced a visible grow-then-shrink oscillation; instead we
+  // pin the rendered viewport via CDP and let the OS window stay at
+  // Chrome's default. WebKit has no clamp so it's untouched either way.
+  if (!fit && config.engine === 'firefox') {
     resizeBrowserWindow(config.engine, config.viewport.width, config.viewport.height + 90);
   }
 

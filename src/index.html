@@ -9,10 +9,13 @@
   </head>
   <body>
     <div class="rt-app">
-      <nav class="rt-modes" role="tablist" aria-label="Workspace mode">
-        <button class="rt-modes__tab is-active js-rt-mode" data-mode="viewports" role="tab" aria-selected="true">Devices</button>
-        <button class="rt-modes__tab js-rt-mode" data-mode="preview" role="tab" aria-selected="false">Preview</button>
-      </nav>
+      <div class="rt-topbar">
+        <nav class="rt-modes" role="tablist" aria-label="Workspace mode">
+          <button class="rt-modes__tab is-active js-rt-mode" data-mode="viewports" role="tab" aria-selected="true">Devices</button>
+          <button class="rt-modes__tab js-rt-mode" data-mode="preview" role="tab" aria-selected="false">Preview</button>
+        </nav>
+        <span class="rt-version js-rt-version" aria-label="App version"></span>
+      </div>
       <div class="rt-toolbar">
         <input
           type="text"

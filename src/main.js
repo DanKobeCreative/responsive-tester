@@ -1,6 +1,7 @@
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { invoke } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 
 import {
   escapeHtml, escapeAttr, slug, flash, normaliseUrl, hostOf, isoSlug, LoadQueue,
@@ -1852,3 +1853,10 @@ document.querySelector('.js-rt-check-updates')?.addEventListener('click', (e) =>
 });
 
 checkForUpdate();
+
+(async () => {
+  try {
+    const v = await getVersion();
+    document.querySelectorAll('.js-rt-version').forEach((el) => { el.textContent = `v${v}`; });
+  } catch { /* dev fallback only */ }
+})();
