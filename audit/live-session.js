@@ -16,9 +16,55 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pathJoin } from 'node:path';
+import tls from 'node:tls';
 import { chromium, firefox, webkit } from 'playwright';
 
 import { gotoStable } from './lib/playwright.js';
+
+// True if URL host is localhost / loopback / RFC1918 LAN. Used both for
+// the pre-flight TLS check and for the runtime route rewrite. We never
+// silently downgrade a public host to http (would be a credential-leak
+// risk).
+function isLocalHost(hostname) {
+  return /^(localhost|127(?:\.\d+){0,3}|0\.0\.0\.0|::1|10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)/i.test(hostname);
+}
+function isLocalUrl(url) {
+  try { return isLocalHost(new URL(url).hostname); } catch { return false; }
+}
+
+// Raw TLS-handshake probe. If the server on host:port speaks plain HTTP
+// (no TLS at all) the handshake fails with ECONNRESET / read error
+// before any cert validation, and tlsConnects resolves false. Self-signed
+// certs are accepted (rejectUnauthorized: false) so a real HTTPS dev
+// server with a self-signed cert still resolves true.
+function tlsConnects(host, port, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => { if (done) return; done = true; resolve(ok); };
+    const sock = tls.connect({ host, port: Number(port), rejectUnauthorized: false, servername: host }, () => {
+      sock.end();
+      finish(true);
+    });
+    sock.on('error', () => finish(false));
+    sock.on('timeout', () => { sock.destroy(); finish(false); });
+    sock.setTimeout(timeoutMs);
+    setTimeout(() => { sock.destroy(); finish(false); }, timeoutMs + 200);
+  });
+}
+
+// Pre-flight any https://local-host URL: if TLS doesn't work, downgrade
+// to http. Public hosts pass through unchanged. Returns the (possibly
+// rewritten) URL.
+async function preflightUrl(url) {
+  if (!url || !url.startsWith('https://')) return url;
+  let parsed;
+  try { parsed = new URL(url); } catch { return url; }
+  if (!isLocalHost(parsed.hostname)) return url;
+  const port = parsed.port || 443;
+  const ok = await tlsConnects(parsed.hostname, port);
+  if (ok) return url;
+  return 'http://' + url.slice('https://'.length);
+}
 
 // Chromium-on-macOS UI minimum (BrowserViewLayout::GetMinimumSize). Below
 // this width a regular browser window can't physically shrink — we switch
@@ -105,18 +151,6 @@ function computeFit(viewport, config) {
       height: Math.round(viewport.height * scale),
     },
   };
-}
-
-// True when the URL points at a local-only host (loopback / RFC1918 LAN
-// address). Used to decide whether a TLS-handshake failure is safe to
-// auto-downgrade to plain http: a public host should never be downgraded
-// silently, but a local dev server almost always means "user typed
-// https://localhost but their server is plain HTTP".
-function isLocalUrl(url) {
-  try {
-    const u = new URL(url);
-    return /^(localhost|127(?:\.\d+){0,3}|0\.0\.0\.0|\[::1\]|10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)/i.test(u.hostname);
-  } catch { return false; }
 }
 
 async function navigate(page, url) {
@@ -259,6 +293,21 @@ async function run() {
 
   const launcher = ENGINES[config.engine];
   if (!launcher) throw new Error(`Unknown engine: ${config.engine}`);
+
+  // Pre-flight TLS check: if user typed https://localhost (or 127.x /
+  // RFC1918 LAN) and the server doesn't actually do TLS, downgrade to
+  // http BEFORE launch. Doing this upfront covers every code path,
+  // including app-mode Chromium where --app=URL loads at process
+  // startup and a post-launch retry can't intercept. didDowngrade is
+  // tracked so we can also rewrite sub-resource requests below — page
+  // HTML over http but absolute https://localhost asset URLs in <link>
+  // would still fail without that.
+  const originalUrl = config.url;
+  config.url = await preflightUrl(config.url);
+  const didDowngrade = originalUrl !== config.url;
+  if (didDowngrade) {
+    emit({ type: 'session-warning', message: `TLS unavailable on ${originalUrl}; loading as ${config.url}` });
+  }
 
   // Fit-to-screen: shrinks oversized viewports to fit the host display.
   // Only Chromium has a clean way to do this (CDP `Emulation.scale`).
@@ -417,6 +466,29 @@ async function run() {
     emit({ type: 'session-page-closed' });
     cleanup().catch(() => {});
   });
+
+  // If the URL was downgraded by pre-flight (TLS doesn't work on the
+  // local dev server), the page HTML often contains absolute
+  // `https://localhost:PORT/...` URLs in <link>/<script> tags that point
+  // back at the same dead TLS port and would fail with the same TLS
+  // error. Rewrite every sub-resource request matching the original
+  // host to http so CSS / JS / images load. Only matches the exact host
+  // that was downgraded — never rewrites other hosts.
+  if (didDowngrade) {
+    let originalHost;
+    try { originalHost = new URL(originalUrl).host; } catch { originalHost = null; }
+    if (originalHost) {
+      const rewriteRoute = async (route) => {
+        const reqUrl = route.request().url();
+        if (reqUrl.startsWith(`https://${originalHost}`)) {
+          await route.continue({ url: 'http://' + reqUrl.slice('https://'.length) });
+        } else {
+          await route.continue();
+        }
+      };
+      try { await context.route('**/*', rewriteRoute); } catch { /* best-effort */ }
+    }
+  }
 
   // App-mode Chromium ignores the macOS auto-hide scrollbar pref and
   // renders persistent gutter scrollbars that occupy real pixels in the
