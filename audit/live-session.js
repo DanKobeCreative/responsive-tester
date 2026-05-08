@@ -224,10 +224,14 @@ async function run() {
 
   const contextOpts = {
     viewport: { width: config.viewport.width, height: config.viewport.height },
-    // Retina-quality rendering. The previous 1x default produced soft
-    // text on Retina-host displays and identically soft PNGs when
-    // screenshotted.
-    deviceScaleFactor: 2,
+    // DPR 1 for LIVE sessions. macOS Retina displays handle pixel-density
+    // scaling at the OS layer, so setting DPR 2 here creates a double-
+    // scale artefact: the engine renders 2x content into the literal
+    // viewport-width OS window, squeezing 320px of content into ~160px
+    // of visible space. Headless screenshot capture (audit/cross-browser
+    // / capture pipelines) DOES need DPR 2 because there's no OS layer
+    // to upscale the PNG; that lives elsewhere.
+    deviceScaleFactor: 1,
     ...(config.engine === 'chromium' && config.viewport.type === 'mobile' ? { isMobile: true } : {}),
     ...(config.viewport.type !== 'desktop' ? { hasTouch: true } : {}),
   };
@@ -252,7 +256,7 @@ async function run() {
       await client.send('Emulation.setDeviceMetricsOverride', {
         width: config.viewport.width,
         height: config.viewport.height,
-        deviceScaleFactor: 2,
+        deviceScaleFactor: 1,
         mobile: config.viewport.type !== 'desktop',
         scale: fit.scale,
       });
@@ -296,7 +300,7 @@ async function run() {
         await client.send('Emulation.setDeviceMetricsOverride', {
           width: config.viewport.width,
           height: config.viewport.height,
-          deviceScaleFactor: 2,
+          deviceScaleFactor: 1,
           mobile: config.viewport.type !== 'desktop',
           viewport: { x, y: 0, width: config.viewport.width, height: config.viewport.height, scale: 1 },
         });
