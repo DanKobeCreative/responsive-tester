@@ -32,10 +32,18 @@ export async function safeInvoke(cmd, args) {
   }
 }
 
+// Default to https:// for public hosts, http:// for local dev. Local
+// dev servers (Vite, Webpack, Wordpress, Docker) are overwhelmingly
+// plain HTTP; auto-upgrading them to https:// produces ERR_SSL_PROTOCOL_ERROR
+// from the browser because there's no TLS on the port. User can override
+// by typing the scheme explicitly.
+const LOCAL_HOST_RE = /^(localhost|127(?:\.\d+){0,3}|0\.0\.0\.0|\[::1\]|10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)/i;
+
 export function normaliseUrl(raw) {
   const trimmed = String(raw ?? '').trim();
   if (!trimmed) return '';
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `${LOCAL_HOST_RE.test(trimmed) ? 'http' : 'https'}://${trimmed}`;
 }
 
 export function hostOf(url) {
