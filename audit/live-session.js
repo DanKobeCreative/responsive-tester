@@ -378,12 +378,45 @@ async function run() {
     cleanup().catch(() => {});
   });
 
+  // App-mode Chromium ignores the macOS auto-hide scrollbar pref and
+  // renders persistent gutter scrollbars that occupy real pixels in the
+  // viewport — verified empirically with screenshots of a minimal page.
+  // No --enable-features flag (OverlayScrollbar / Refactor / FluentScrollbar
+  // disabled) had any effect. The only thing that takes them away is
+  // hiding via CSS: scrollbar-width:none plus ::-webkit-scrollbar
+  // display:none. Content still scrolls via trackpad/wheel/keys; we just
+  // don't render the visual indicator. For a responsive tester the
+  // visible scrollbar gutter is worse than no indicator: it eats real
+  // viewport pixels and makes the visible width less than the target.
+  // Only suppress in app-mode — regular browser windows already auto-hide
+  // overlay scrollbars correctly.
+  if (useAppMode) {
+    await page.addInitScript(() => {
+      const apply = () => {
+        const id = 'rt-hide-scrollbars';
+        if (document.getElementById(id)) return;
+        const style = document.createElement('style');
+        style.id = id;
+        style.textContent = `
+          html, body { scrollbar-width: none !important; }
+          ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+        `;
+        (document.head || document.documentElement).appendChild(style);
+      };
+      if (document.head || document.documentElement) apply();
+      else document.addEventListener('DOMContentLoaded', apply, { once: true });
+    }).catch(() => { /* non-fatal */ });
+  }
+
   // App-mode: --app=URL navigates the startup window already; skipping
   // the second navigate avoids a redundant load and keeps app-mode UI
-  // chrome stable. Regular: navigate explicitly.
+  // chrome stable. Regular: navigate explicitly. addInitScript applies
+  // to the next navigation, so app-mode needs an explicit reload to
+  // pick it up on the URL we already loaded at launch.
   if (!useAppMode) {
     await navigate(page, config.url);
   } else {
+    try { await page.reload({ waitUntil: 'load' }); } catch { /* best-effort */ }
     try { await page.bringToFront(); } catch { /* best-effort */ }
   }
   // Initial OS-level activation. Called twice: once shortly after launch
