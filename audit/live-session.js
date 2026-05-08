@@ -378,12 +378,45 @@ async function run() {
     cleanup().catch(() => {});
   });
 
+  // For Chromium specifically: inject an overlay-style scrollbar so the
+  // test window doesn't show a fat double scrollbar on macOS systems
+  // where "Show scroll bars: Always" is set in System Settings. Without
+  // this you see the page's native scroll thumb stacked next to the
+  // reserved gutter. addInitScript runs on every navigation so the
+  // override survives URL changes from the Tauri side. Other engines
+  // honour macOS prefs cleanly and don't need this.
+  if (config.engine === 'chromium') {
+    await page.addInitScript(() => {
+      const apply = () => {
+        const id = 'rt-scrollbar-overlay';
+        if (document.getElementById(id)) return;
+        const style = document.createElement('style');
+        style.id = id;
+        style.textContent = `
+          ::-webkit-scrollbar { width: 8px; height: 8px; }
+          ::-webkit-scrollbar-track { background: transparent; }
+          ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.25); border-radius: 4px; }
+          ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.45); }
+          ::-webkit-scrollbar-corner { background: transparent; }
+          html { scrollbar-gutter: auto !important; }
+        `;
+        (document.head || document.documentElement).appendChild(style);
+      };
+      if (document.head || document.documentElement) apply();
+      else document.addEventListener('DOMContentLoaded', apply, { once: true });
+    }).catch(() => { /* non-fatal */ });
+  }
+
   // App-mode: --app=URL navigates the startup window already; skipping
   // the second navigate avoids a redundant load and keeps app-mode UI
   // chrome stable. Regular: navigate explicitly.
   if (!useAppMode) {
     await navigate(page, config.url);
   } else {
+    // App-mode startup window already navigated via --app=URL, but the
+    // initScript above only takes effect on the NEXT navigation. Force
+    // one reload so the scrollbar styles inject on the actual page.
+    try { await page.reload({ waitUntil: 'load' }); } catch { /* best-effort */ }
     try { await page.bringToFront(); } catch { /* best-effort */ }
   }
   // Initial OS-level activation. Called twice: once shortly after launch
