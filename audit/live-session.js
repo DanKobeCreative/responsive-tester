@@ -48,19 +48,13 @@ function launchArgsFor(engineName, position, fit, viewport) {
   const args = [];
   const win = fit?.scaledWindow || { width: viewport.width, height: viewport.height };
   if (engineName === 'chromium') {
+    // No --window-size on Chromium. The window is sized post-launch via
+    // CDP Browser.setWindowBounds (when ≥ Chrome's ~500px clamp) so we
+    // get a single resize signal instead of competing args + Playwright
+    // viewport sync + AppleScript. For sub-clamp viewports the OS window
+    // stays at Chrome's default and the rendered viewport is pinned via
+    // Emulation.setDeviceMetricsOverride.
     if (position) args.push(`--window-position=${position.x},${position.y}`);
-    // Chromium-on-macOS-only behaviour: passing --window-size below its
-    // UI minimum (~500px) makes Chrome glitch. The window opens at the
-    // requested width briefly, then the toolbar/tab UI asserts itself
-    // and forces an animated grow-back to the minimum. With our CDP
-    // setDeviceMetricsOverride pinning the rendered viewport, we don't
-    // need the OS window to match — Chrome just opens at its default
-    // size and the page renders correctly inside it. Skipping
-    // --window-size kills the oscillation. For wide viewports we still
-    // pass it so the window opens roughly the right shape.
-    if (win.width >= 600) {
-      args.push(`--window-size=${win.width},${win.height + 90}`);
-    }
   } else if (engineName === 'firefox') {
     args.push('-width', String(win.width), '-height', String(win.height + 80));
   }
@@ -231,8 +225,21 @@ async function run() {
     args: launchArgsFor(config.engine, config.position, fit, config.viewport),
   };
 
+  // CRITICAL for headed Chromium: pass viewport: null so Playwright skips
+  // its internal _updateViewport pipeline. That pipeline calls
+  // Browser.setWindowBounds to resize the OS window to viewport+insets,
+  // and on macOS Chrome clamps the result at its UI minimum (~500px).
+  // The visible effect is the window animating from the requested 320 up
+  // to the clamped ~500 — the "growing" we kept fighting. With null, we
+  // own the emulation and set Emulation.setDeviceMetricsOverride
+  // ourselves below; Chrome's OS window stays at its default size and
+  // the rendered viewport is pinned at config.viewport.
+  // Firefox / WebKit don't have this OS-resize coupling so they still
+  // use Playwright's normal viewport path.
   const contextOpts = {
-    viewport: { width: config.viewport.width, height: config.viewport.height },
+    viewport: config.engine === 'chromium'
+      ? null
+      : { width: config.viewport.width, height: config.viewport.height },
     // DPR 1 for LIVE sessions. macOS Retina displays handle pixel-density
     // scaling at the OS layer, so setting DPR 2 here creates a double-
     // scale artefact: the engine renders 2x content into the literal
@@ -241,7 +248,6 @@ async function run() {
     // / capture pipelines) DOES need DPR 2 because there's no OS layer
     // to upscale the PNG; that lives elsewhere.
     deviceScaleFactor: 1,
-    ...(config.engine === 'chromium' && config.viewport.type === 'mobile' ? { isMobile: true } : {}),
     ...(config.viewport.type !== 'desktop' ? { hasTouch: true } : {}),
   };
   if (config.auth?.username) {
@@ -255,14 +261,19 @@ async function run() {
   const context = await browser.newContext(contextOpts);
   const page = await context.newPage();
 
-  // Chromium: pin the rendered viewport to config.viewport regardless of
-  // the OS window size. Chrome's macOS minimum (~500px) means small
-  // mobile viewports physically can't have a matching OS window; the page
-  // renders at the target width inside Chrome's clamp-default window with
-  // dead white space on the right. The override is also re-applied on
-  // every top-frame navigation as defence — Playwright's own bookkeeping
-  // mostly survives this, but defending the rendered width here means a
-  // single source of truth and zero room for the override to be lost.
+  // Chromium: we own emulation entirely (newContext was passed
+  // viewport: null above to skip Playwright's _updateViewport pipeline).
+  // Two CDP calls:
+  //   1. Browser.setWindowBounds: size the OS window to the viewport when
+  //      the viewport is ≥ Chrome's macOS UI clamp (~500px). Below that,
+  //      the call would just be clamped, so we skip it and let the OS
+  //      window stay at Chrome's default — rendered viewport is still
+  //      pinned by (2) so the page lays out correctly with dead space
+  //      on the right.
+  //   2. Emulation.setDeviceMetricsOverride: pin the rendered viewport
+  //      to config.viewport. Re-applied on every top-frame navigation
+  //      because a stale override is the only thing that could ever
+  //      cause this to drift again.
   let chromiumClient = null;
   if (config.engine === 'chromium') {
     try {
@@ -277,12 +288,26 @@ async function run() {
         });
       };
       await applyOverride();
-      // Re-apply on every top-frame navigation. Subframes don't matter.
+      await chromiumClient.send('Page.enable');
       chromiumClient.on('Page.frameNavigated', ({ frame }) => {
         if (frame.parentId) return;
         applyOverride().catch(() => {});
       });
-      await chromiumClient.send('Page.enable');
+      // Single OS window resize, only when Chrome won't clamp it. macOS
+      // Chrome clamps below ~500; allow a small buffer above that.
+      const targetWin = fit?.scaledWindow || { width: config.viewport.width, height: config.viewport.height };
+      if (targetWin.width >= 520) {
+        try {
+          const { windowId } = await chromiumClient.send('Browser.getWindowForTarget');
+          await chromiumClient.send('Browser.setWindowBounds', {
+            windowId,
+            bounds: {
+              width: targetWin.width + 2,
+              height: targetWin.height + 80,
+            },
+          });
+        } catch { /* best-effort, the override above is what matters */ }
+      }
     } catch (err) {
       emit({ type: 'session-warning', message: `Chromium device metrics override failed: ${err.message ?? err}` });
     }
