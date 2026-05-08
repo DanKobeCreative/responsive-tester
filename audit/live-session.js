@@ -107,8 +107,36 @@ function computeFit(viewport, config) {
   };
 }
 
+// True when the URL points at a local-only host (loopback / RFC1918 LAN
+// address). Used to decide whether a TLS-handshake failure is safe to
+// auto-downgrade to plain http: a public host should never be downgraded
+// silently, but a local dev server almost always means "user typed
+// https://localhost but their server is plain HTTP".
+function isLocalUrl(url) {
+  try {
+    const u = new URL(url);
+    return /^(localhost|127(?:\.\d+){0,3}|0\.0\.0\.0|\[::1\]|10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)/i.test(u.hostname);
+  } catch { return false; }
+}
+
 async function navigate(page, url) {
-  await gotoStable(page, url);
+  try {
+    await gotoStable(page, url);
+  } catch (err) {
+    // Auto-downgrade https → http for local dev servers when the failure
+    // is a TLS-handshake error (server speaks plain HTTP, browser was
+    // started with TLS, no negotiation possible). Public hosts are
+    // never downgraded — too easy to leak credentials over plain http.
+    const msg = String(err?.message || err);
+    const tlsFail = /TLS|SSL|ERR_SSL|certificate|secure connection/i.test(msg);
+    if (tlsFail && url.startsWith('https://') && isLocalUrl(url)) {
+      const downgraded = 'http://' + url.slice('https://'.length);
+      emit({ type: 'session-warning', message: `TLS failed for ${url}; retrying as ${downgraded}` });
+      await gotoStable(page, downgraded);
+    } else {
+      throw err;
+    }
+  }
   // Deliberately NOT calling triggerScrollAnimations() here. That helper
   // exists to pre-warm scroll-revealed content before a headless
   // screenshot. In a headed live session the user will scroll manually,
