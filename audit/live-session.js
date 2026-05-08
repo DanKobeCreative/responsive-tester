@@ -249,10 +249,25 @@ async function run() {
   const context = await browser.newContext(contextOpts);
   const page = await context.newPage();
 
-  // Chromium fit-to-screen: scale rendering down for over-screen viewports.
-  // Applied here (before navigate) so the page lays out at the right scale
-  // from the first paint.
-  if (fit && config.engine === 'chromium') {
+  // Chromium: pin the rendered viewport to config.viewport.width regardless
+  // of the OS window size. Two failure modes this is fighting:
+  //   1. Chrome's macOS minimum window width (~500px) clamps the OS window
+  //      so it can't physically be 320 wide. AppleScript AX is supposed to
+  //      bypass that, but on installs where the override doesn't take
+  //      (OS version, Accessibility permission missing, Chrome asserting
+  //      setMinSize: harder in newer builds), the page would otherwise
+  //      lay out at 500.
+  //   2. We previously used a viewport: { x, y, width, height } sub-rect
+  //      to centre the rendered page inside the wider window. Chrome's
+  //      compositor silently dropped that on scroll-driven layout changes,
+  //      causing the "jump after a couple of sections" bug.
+  //
+  // The override below sets only width/height/dpr/mobile — no clip, no
+  // scale. The page renders at config.viewport.width even when the OS
+  // window is stuck wider; the gap on the right is dead white space.
+  // Stable, no jumps, matches what the user is actually testing for.
+  // Applied before navigate so the first paint is at the right size.
+  if (config.engine === 'chromium') {
     try {
       const client = await context.newCDPSession(page);
       await client.send('Emulation.setDeviceMetricsOverride', {
@@ -260,10 +275,10 @@ async function run() {
         height: config.viewport.height,
         deviceScaleFactor: 1,
         mobile: config.viewport.type !== 'desktop',
-        scale: fit.scale,
+        ...(fit ? { scale: fit.scale } : {}),
       });
     } catch (err) {
-      emit({ type: 'session-warning', message: `Chromium fit-to-screen failed: ${err.message ?? err}` });
+      emit({ type: 'session-warning', message: `Chromium device metrics override failed: ${err.message ?? err}` });
     }
   }
 
