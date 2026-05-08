@@ -247,6 +247,10 @@ async function run() {
 
   if (useAppMode) {
     const userDataDir = mkdtempSync(pathJoin(tmpdir(), `rt-chrome-app-${process.pid}-`));
+    // viewport: null + deviceScaleFactor is rejected by Playwright. Drop
+    // deviceScaleFactor here — the OS window IS the target size in
+    // app-mode so the page renders at the correct width without
+    // emulation. DPR defaults to 1 which is what we want anyway.
     context = await chromium.launchPersistentContext(userDataDir, {
       headless: false,
       args: [
@@ -255,7 +259,6 @@ async function run() {
         ...(config.position ? [`--window-position=${config.position.x},${config.position.y}`] : []),
       ],
       viewport: null,
-      deviceScaleFactor: 1,
       ...(config.viewport.type !== 'desktop' ? { hasTouch: true } : {}),
       ...(config.auth?.username ? {
         httpCredentials: { username: config.auth.username, password: config.auth.password ?? '' },
@@ -274,14 +277,19 @@ async function run() {
       headless: false,
       args: launchArgsFor(config.engine, config.position, fit, config.viewport),
     };
+    const isChromium = config.engine === 'chromium';
     const contextOpts = {
-      viewport: config.engine === 'chromium'
+      // viewport: null for Chromium so Playwright skips _updateViewport
+      // (which would call Browser.setWindowBounds and fight with our own
+      // CDP override). Verified at crPage.js:736.
+      viewport: isChromium
         ? null
         : { width: config.viewport.width, height: config.viewport.height },
-      // DPR 1 for LIVE sessions — macOS Retina handles pixel scaling at
-      // the OS layer; DPR 2 here would squeeze rendered content.
-      // Headless capture pipelines set DPR 2 separately.
-      deviceScaleFactor: 1,
+      // Playwright errors with "deviceScaleFactor not supported with null
+      // viewport" so we only set it on the non-Chromium path. For
+      // Chromium DPR is set via our own setDeviceMetricsOverride below
+      // (DPR 1 — macOS Retina handles pixel scaling at the OS layer).
+      ...(isChromium ? {} : { deviceScaleFactor: 1 }),
       ...(config.viewport.type !== 'desktop' ? { hasTouch: true } : {}),
     };
     if (config.auth?.username) {

@@ -3324,7 +3324,7 @@ dependencies = [
 
 [[package]]
 name = "responsive-tester"
-version = "0.10.21"
+version = "0.10.22"
 dependencies = [
  "futures",
  "libc",
