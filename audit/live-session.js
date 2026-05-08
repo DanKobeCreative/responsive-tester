@@ -26,6 +26,19 @@ import { gotoStable } from './lib/playwright.js';
 // uses Browser::TYPE_APP_POPUP, a window class without that clamp.
 const CHROMIUM_MIN_REGULAR_WIDTH = 520;
 
+// Keep the launched window fully on-screen. The Tauri side computes
+// positions for tiling sessions and can land windows beyond the right
+// or bottom edge when the user has a small display or many sessions are
+// already placed. Clamp here so we never open half-off, and leave a
+// 20px margin from the right/bottom so window-controls stay clickable.
+function clampPosition(position, win, screen) {
+  if (!position || !screen?.width || !screen?.height) return position;
+  const margin = 20;
+  const x = Math.max(0, Math.min(position.x, screen.width - win.width - margin));
+  const y = Math.max(28, Math.min(position.y, screen.height - win.height - margin));
+  return { x, y };
+}
+
 const ENGINES = { chromium, firefox, webkit };
 
 function emit(obj) {
@@ -240,6 +253,17 @@ async function run() {
   const targetWin = fit?.scaledWindow || { width: config.viewport.width, height: config.viewport.height };
   const useAppMode = config.engine === 'chromium' && targetWin.width < CHROMIUM_MIN_REGULAR_WIDTH;
 
+  // Clamp the requested position so the launched window can't land
+  // half-off the right/bottom edge or under the menu bar. Effective
+  // OS-window size for the clamp depends on engine: app-mode chromium
+  // matches targetWin; regular chromium opens at Chrome's default
+  // (~1100x1100ish) but we resize via setWindowBounds to targetWin so
+  // clamp against that.
+  const screen = (config.screenWidth && config.screenHeight)
+    ? { width: Number(config.screenWidth), height: Number(config.screenHeight) }
+    : null;
+  const clampedPosition = clampPosition(config.position, targetWin, screen);
+
   let browser = null;
   let context;
   let page;
@@ -256,7 +280,7 @@ async function run() {
       args: [
         `--app=${config.url}`,
         `--window-size=${targetWin.width},${targetWin.height}`,
-        ...(config.position ? [`--window-position=${config.position.x},${config.position.y}`] : []),
+        ...(clampedPosition ? [`--window-position=${clampedPosition.x},${clampedPosition.y}`] : []),
       ],
       viewport: null,
       ...(config.viewport.type !== 'desktop' ? { hasTouch: true } : {}),
@@ -275,7 +299,7 @@ async function run() {
     // CDP calls below.
     const launchOpts = {
       headless: false,
-      args: launchArgsFor(config.engine, config.position, fit, config.viewport),
+      args: launchArgsFor(config.engine, clampedPosition, fit, config.viewport),
     };
     const isChromium = config.engine === 'chromium';
     const contextOpts = {
@@ -309,12 +333,19 @@ async function run() {
     if (config.engine === 'chromium') {
       try {
         chromiumClient = await context.newCDPSession(page);
+        // mobile: false even for tablet/mobile types — empirical finding:
+        // with mobile:true, Chromium ignores the override width and uses
+        // the OS window's content area for window.innerWidth. The page
+        // ends up laying out at the OS window width (e.g. 980 instead of
+        // 768 for a tablet), which is exactly the bug we kept seeing.
+        // hasTouch is set via the context options separately so touch
+        // event emulation still happens.
         const applyOverride = async () => {
           await chromiumClient.send('Emulation.setDeviceMetricsOverride', {
             width: config.viewport.width,
             height: config.viewport.height,
             deviceScaleFactor: 1,
-            mobile: config.viewport.type !== 'desktop',
+            mobile: false,
             ...(fit ? { scale: fit.scale } : {}),
           });
         };
@@ -329,6 +360,7 @@ async function run() {
           await chromiumClient.send('Browser.setWindowBounds', {
             windowId,
             bounds: {
+              ...(clampedPosition ? { left: clampedPosition.x, top: clampedPosition.y } : {}),
               width: targetWin.width + 2,
               height: targetWin.height + 80,
             },
@@ -354,10 +386,15 @@ async function run() {
   } else {
     try { await page.bringToFront(); } catch { /* best-effort */ }
   }
-  // Initial OS-level activation. NOT repeated on later navigate commands
-  // — yanking focus on every URL sync would feel obnoxious when the user
-  // is intentionally working inside the Responsive Tester app.
+  // Initial OS-level activation. Called twice: once shortly after launch
+  // (window may not be fully registered with the Window Server yet, so
+  // open -a misses) and again after navigate completes (the window is
+  // definitely up by now). Two cheap calls > one missed activation
+  // leaving the browser opening behind the Tauri app. NOT repeated on
+  // later navigate commands — yanking focus on every URL sync would feel
+  // obnoxious when the user is intentionally working in the Tauri app.
   activateBrowserApp(config.engine);
+  setTimeout(() => activateBrowserApp(config.engine), 600);
 
   // Firefox-only OS window-size override via AppleScript / AX. Firefox
   // doesn't assert setMinSize: hard so AX writes actually shrink the
@@ -369,10 +406,19 @@ async function run() {
     resizeBrowserWindow(config.engine, config.viewport.width, config.viewport.height + 90);
   }
 
+  // Rendered viewport probe — surfaced for the smoke test to assert that
+  // emulation actually took. about:blank/normal pages should report the
+  // target width here; if not, something cleared the override or
+  // Playwright never applied it.
+  let renderedWidth = null;
+  try { renderedWidth = await page.evaluate(() => window.innerWidth); }
+  catch { /* page might not be evaluable yet — non-fatal */ }
+
   emit({
     type: 'session-ready',
     engine: config.engine,
     viewport: config.viewport.id,
+    renderedWidth,
     pid: process.pid,
   });
 

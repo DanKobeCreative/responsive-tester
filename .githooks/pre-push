@@ -1,0 +1,50 @@
+#!/bin/sh
+# Pre-push hook — runs the audit sidecar smoke test if any commit being
+# pushed touches audit/live-session.js or audit/lib/. Refuses the push
+# on failure so we never publish a Chromium-fataling release again.
+#
+# Activate via:    git config core.hooksPath .githooks
+# Auto-activated by `npm install` (root package.json `prepare` script).
+
+set -e
+
+ZERO=0000000000000000000000000000000000000000
+SMOKE_NEEDED=0
+
+while read local_ref local_sha remote_ref remote_sha; do
+  if [ "$local_sha" = "$ZERO" ]; then
+    continue  # branch deletion
+  fi
+
+  # If the remote ref doesn't exist yet, diff against the merge base with
+  # master so we look at this branch's contribution rather than the whole
+  # repo history.
+  if [ "$remote_sha" = "$ZERO" ]; then
+    base=$(git merge-base "$local_sha" master 2>/dev/null || echo "$ZERO")
+    if [ "$base" = "$ZERO" ]; then
+      changed=$(git diff-tree --no-commit-id --name-only -r "$local_sha")
+    else
+      changed=$(git diff --name-only "$base" "$local_sha")
+    fi
+  else
+    changed=$(git diff --name-only "$remote_sha" "$local_sha")
+  fi
+
+  if printf '%s\n' "$changed" | grep -qE '^audit/(live-session\.js|lib/)'; then
+    SMOKE_NEEDED=1
+    break
+  fi
+done
+
+if [ "$SMOKE_NEEDED" -eq 1 ]; then
+  echo "[pre-push] audit sidecar changed — running smoke test..."
+  if ! ( cd audit && node smoke.js ); then
+    echo ""
+    echo "[pre-push] smoke test FAILED. Refusing push."
+    echo "[pre-push] Fix the failing engine/viewport combo, then push again."
+    exit 1
+  fi
+  echo "[pre-push] smoke test passed."
+fi
+
+exit 0

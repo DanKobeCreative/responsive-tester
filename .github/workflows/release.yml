@@ -28,6 +28,16 @@ jobs:
       - name: Install npm dependencies
         run: npm install
 
+      - name: Install audit sidecar dependencies (Playwright)
+        run: cd audit && npm install && npx playwright install --with-deps chromium firefox webkit
+
+      - name: Audit sidecar smoke test
+        # Catches the class of bug where a Playwright option combination
+        # crashes live-session.js before the browser appears (e.g. v0.10.20
+        # deviceScaleFactor + viewport: null). Aborts the release before
+        # a DMG is built and `latest.json` is published.
+        run: cd audit && node smoke.js
+
       - name: Build, sign, and publish
         uses: tauri-apps/tauri-action@v0
         env:
