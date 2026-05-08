@@ -48,9 +48,9 @@ function launchArgsFor(engineName, position, fit, viewport) {
   const args = [];
   // OS window size — match the (possibly fitted) viewport. Chrome's
   // macOS minimum window width (~500px) will clamp this on small
-  // mobile viewports; CDP centering downstream handles the resulting
-  // gap. For viewports ≥ the platform minimum, this gives a tight
-  // viewport-matching window.
+  // mobile viewports; AppleScript AX resize downstream bypasses the
+  // clamp where Accessibility permission is granted. For viewports ≥
+  // the platform minimum, this gives a tight viewport-matching window.
   const win = fit?.scaledWindow || { width: viewport.width, height: viewport.height };
   if (engineName === 'chromium') {
     if (position) args.push(`--window-position=${position.x},${position.y}`);
@@ -162,8 +162,11 @@ function resizeBrowserWindow(engineName, width, height) {
       { stdio: 'ignore' },
     );
   } catch {
-    // Accessibility permission missing or window not yet registered —
-    // CDP centering downstream picks up the slack for Chromium.
+    // Accessibility permission missing or window not yet registered.
+    // The window stays at Chrome / Firefox's UI minimum width and the
+    // page sits flush left inside it. Better than the previous CDP
+    // sub-viewport centring trick, which Chrome's compositor would
+    // silently drop on scroll-driven layout changes.
   }
 }
 
@@ -248,8 +251,7 @@ async function run() {
 
   // Chromium fit-to-screen: scale rendering down for over-screen viewports.
   // Applied here (before navigate) so the page lays out at the right scale
-  // from the first paint; centering for sub-min viewports is handled
-  // post-resize below.
+  // from the first paint.
   if (fit && config.engine === 'chromium') {
     try {
       const client = await context.newCDPSession(page);
@@ -284,30 +286,6 @@ async function run() {
   // clamp so we leave it alone.
   if (!fit && (config.engine === 'chromium' || config.engine === 'firefox')) {
     resizeBrowserWindow(config.engine, config.viewport.width, config.viewport.height + 90);
-  }
-
-  // Chromium centering fallback — only if the OS window is still wider
-  // than the viewport after the AppleScript resize attempt. Splits the
-  // gap symmetrically so it reads as "device frame" rather than "page
-  // stuck on the left of a wider window."
-  if (!fit && config.engine === 'chromium') {
-    try {
-      const client = await context.newCDPSession(page);
-      const { bounds } = await client.send('Browser.getWindowForTarget');
-      const browserWidth = bounds?.width || config.viewport.width;
-      if (browserWidth > config.viewport.width) {
-        const x = Math.floor((browserWidth - config.viewport.width) / 2);
-        await client.send('Emulation.setDeviceMetricsOverride', {
-          width: config.viewport.width,
-          height: config.viewport.height,
-          deviceScaleFactor: 1,
-          mobile: config.viewport.type !== 'desktop',
-          viewport: { x, y: 0, width: config.viewport.width, height: config.viewport.height, scale: 1 },
-        });
-      }
-    } catch (err) {
-      emit({ type: 'session-warning', message: `Chromium centering failed: ${err.message ?? err}` });
-    }
   }
 
   emit({
