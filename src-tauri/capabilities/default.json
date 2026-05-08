@@ -1,8 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Capability for the main window. Covers both the Vite dev URL and the tauri-plugin-localhost runtime URL — without remote.urls, plugin command invocations from the localhost-served frontend get rejected by the ACL with `not allowed by ACL` even though the permissions are listed.",
   "windows": ["main"],
+  "local": true,
+  "remote": {
+    "urls": ["http://localhost:*"]
+  },
   "permissions": [
     "core:default",
     "opener:default",
