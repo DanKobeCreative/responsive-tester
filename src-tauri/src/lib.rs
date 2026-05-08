@@ -337,6 +337,17 @@ pub fn run() {
                 .resizable(true)
                 .build()?;
 
+            // Sync audit JS sidecar scripts from the .app bundle into
+            // the writable app_data audit dir on every launch. The
+            // auto-updater refreshes the bundle but qa::resolve_audit_dir
+            // reads from app_data — without this sync, every JS-only
+            // fix shipped after a release sat in the bundle and never
+            // ran. Heavy node_modules is left intact so we don't
+            // redownload Playwright browsers on every launch.
+            if let Err(e) = qa::sync_audit_scripts(&app.handle()) {
+                eprintln!("qa: audit script sync failed: {}", e);
+            }
+
             // Sweep any leftover live-session / cross-browser children
             // from a previous force-quit so they don't accumulate as
             // hidden orphans across launches.

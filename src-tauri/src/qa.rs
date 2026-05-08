@@ -211,6 +211,44 @@ pub fn qa_resolve_audit_dir(app: AppHandle) -> Result<String, String> {
     Ok(resolve_audit_dir(&app)?.display().to_string())
 }
 
+// Re-sync audit JS scripts from the app bundle into the writable app
+// data directory on every launch. Without this, the auto-updater
+// replaces the .app bundle (with new live-session.js, smoke.js, etc.)
+// but the runtime keeps using the old copies in app_data_dir that were
+// installed at first run — so JS-only fixes never reach the user.
+//
+// Only the JS files / package manifests are synced; node_modules is
+// left intact so we don't redownload Playwright on every launch. If a
+// release ever bumps audit deps, the package.json copy here will trigger
+// a npm-install mismatch which the next click on a session will surface.
+pub fn sync_audit_scripts(app: &AppHandle) -> Result<(), String> {
+    let prod = match prod_audit_dir(app) {
+        Ok(p) => p,
+        Err(_) => return Ok(()),  // No app_data_dir — dev mode, skip
+    };
+    if !prod.exists() {
+        return Ok(());  // Audit deps never installed — nothing to sync yet
+    }
+    let resources = match app.path().resource_dir() {
+        Ok(r) => r,
+        Err(_) => return Ok(()),
+    };
+    let candidates = [
+        resources.join("_up_").join("audit"),
+        resources.join("audit"),
+    ];
+    for bundled in candidates {
+        if !bundled.exists() {
+            continue;
+        }
+        // copy_dir_recursive overwrites files but doesn't delete entries
+        // missing from src, so prod/node_modules survives the sync.
+        copy_dir_recursive(&bundled, &prod)?;
+        return Ok(());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn qa_install_audit_deps(app: AppHandle) -> Result<(), String> {
     let prod = prod_audit_dir(&app)?;
