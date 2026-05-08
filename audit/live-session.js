@@ -77,6 +77,8 @@ function launchArgsFor(engineName, position, fit, viewport) {
     // stays at Chrome's default and the rendered viewport is pinned via
     // Emulation.setDeviceMetricsOverride.
     if (position) args.push(`--window-position=${position.x},${position.y}`);
+    // Allow self-signed / untrusted certs (local dev servers).
+    args.push('--ignore-certificate-errors', '--allow-insecure-localhost');
   } else if (engineName === 'firefox') {
     args.push('-width', String(win.width), '-height', String(win.height + 80));
   }
@@ -280,9 +282,16 @@ async function run() {
       args: [
         `--app=${config.url}`,
         `--window-size=${targetWin.width},${targetWin.height}`,
+        // Allow self-signed and otherwise-untrusted certs. Local dev
+        // servers (Vite/Wordpress/Docker) usually have a self-signed
+        // cert; without these flags Chromium's privacy interstitial
+        // blocks the load.
+        '--ignore-certificate-errors',
+        '--allow-insecure-localhost',
         ...(clampedPosition ? [`--window-position=${clampedPosition.x},${clampedPosition.y}`] : []),
       ],
       viewport: null,
+      ignoreHTTPSErrors: true,
       ...(config.viewport.type !== 'desktop' ? { hasTouch: true } : {}),
       ...(config.auth?.username ? {
         httpCredentials: { username: config.auth.username, password: config.auth.password ?? '' },
@@ -314,6 +323,9 @@ async function run() {
       // Chromium DPR is set via our own setDeviceMetricsOverride below
       // (DPR 1 — macOS Retina handles pixel scaling at the OS layer).
       ...(isChromium ? {} : { deviceScaleFactor: 1 }),
+      // Tolerate self-signed / untrusted certs so local dev servers with
+      // HTTPS work without manually clicking past a privacy interstitial.
+      ignoreHTTPSErrors: true,
       ...(config.viewport.type !== 'desktop' ? { hasTouch: true } : {}),
     };
     if (config.auth?.username) {
