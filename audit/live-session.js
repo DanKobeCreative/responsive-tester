@@ -165,7 +165,6 @@ async function navigate(page, url) {
     const tlsFail = /TLS|SSL|ERR_SSL|certificate|secure connection/i.test(msg);
     if (tlsFail && url.startsWith('https://') && isLocalUrl(url)) {
       const downgraded = 'http://' + url.slice('https://'.length);
-      emit({ type: 'session-warning', message: `TLS failed for ${url}; retrying as ${downgraded}` });
       await gotoStable(page, downgraded);
     } else {
       throw err;
@@ -302,12 +301,12 @@ async function run() {
   // tracked so we can also rewrite sub-resource requests below — page
   // HTML over http but absolute https://localhost asset URLs in <link>
   // would still fail without that.
+  // Silent: a successful downgrade isn't an error worth a toast — the
+  // page loads correctly and the user has already typed a clearly-local
+  // URL where http is the obvious answer.
   const originalUrl = config.url;
   config.url = await preflightUrl(config.url);
   const didDowngrade = originalUrl !== config.url;
-  if (didDowngrade) {
-    emit({ type: 'session-warning', message: `TLS unavailable on ${originalUrl}; loading as ${config.url}` });
-  }
 
   // Fit-to-screen: shrinks oversized viewports to fit the host display.
   // Only Chromium has a clean way to do this (CDP `Emulation.scale`).
@@ -474,16 +473,42 @@ async function run() {
   // error. Rewrite every sub-resource request matching the original
   // host to http so CSS / JS / images load. Only matches the exact host
   // that was downgraded — never rewrites other hosts.
+  //
+  // CRITICAL: route.continue({ url }) is documented Chromium-only. Firefox
+  // and WebKit silently ignore the url override and retry the original
+  // https URL — leaving the page rendered unstyled because CSS never
+  // loads. The cross-engine equivalent is fetch() the http URL ourselves
+  // and route.fulfill() with the result.
   if (didDowngrade) {
     let originalHost;
     try { originalHost = new URL(originalUrl).host; } catch { originalHost = null; }
     if (originalHost) {
       const rewriteRoute = async (route) => {
         const reqUrl = route.request().url();
-        if (reqUrl.startsWith(`https://${originalHost}`)) {
-          await route.continue({ url: 'http://' + reqUrl.slice('https://'.length) });
-        } else {
+        if (!reqUrl.startsWith(`https://${originalHost}`)) {
           await route.continue();
+          return;
+        }
+        const httpUrl = 'http://' + reqUrl.slice('https://'.length);
+        try {
+          const req = route.request();
+          // Only forward request headers, method, body. Strip headers
+          // node-fetch refuses (host is auto-set; cookies handled by
+          // browser context after fulfill).
+          const headers = { ...req.headers() };
+          delete headers.host;
+          const resp = await fetch(httpUrl, {
+            method: req.method(),
+            headers,
+            body: ['GET', 'HEAD'].includes(req.method()) ? undefined : req.postDataBuffer() ?? undefined,
+            redirect: 'manual',
+          });
+          const body = Buffer.from(await resp.arrayBuffer());
+          const respHeaders = {};
+          resp.headers.forEach((v, k) => { respHeaders[k] = v; });
+          await route.fulfill({ status: resp.status, headers: respHeaders, body });
+        } catch {
+          await route.abort();
         }
       };
       try { await context.route('**/*', rewriteRoute); } catch { /* best-effort */ }
