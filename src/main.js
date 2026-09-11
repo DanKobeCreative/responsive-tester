@@ -46,13 +46,13 @@ const DEFAULT_DEVICES = [
 // "Ship-Ready (12)" sidebar preset enables the canonical set.
 const SHIP_READY_DEVICES = [
   { id: 'sr-narrow-320',     name: 'Narrow smoke',          w: 320,  h: 568,  type: 'mobile',  default_enabled: false },
-  { id: 'sr-sm-640',         name: 'sm breakpoint',         w: 640,  h: 960,  type: 'mobile',  default_enabled: false },
+  { id: 'sr-md-600',         name: '600 tier',              w: 600,  h: 960,  type: 'mobile',  default_enabled: false },
   { id: 'sr-iphone-se-land', name: 'iPhone SE landscape',   w: 667,  h: 375,  type: 'mobile',  default_enabled: false },
-  { id: 'sr-md-768',         name: 'iPad Mini / md',        w: 768,  h: 1024, type: 'tablet',  default_enabled: false },
+  { id: 'sr-md-768',         name: '768 tier / iPad 9th gen', w: 768, h: 1024, type: 'tablet',  default_enabled: false },
   { id: 'sr-iphone-16-land', name: 'iPhone 16 landscape',   w: 852,  h: 393,  type: 'tablet',  default_enabled: false },
   { id: 'sr-lg-1024',        name: 'iPad Pro 11" / lg',     w: 1024, h: 1366, type: 'tablet',  default_enabled: false },
   { id: 'sr-mbp-1440',       name: 'MacBook Pro / 1440',    w: 1440, h: 900,  type: 'desktop', default_enabled: false },
-  { id: 'sr-2xl-1536',       name: '2xl breakpoint',        w: 1536, h: 864,  type: 'desktop', default_enabled: false },
+  { id: 'sr-mbp-14-short',   name: 'MacBook Pro 14" short', w: 1512, h: 740,  type: 'desktop', default_enabled: false },
 ];
 
 // Canonical Kobe Ship-Ready preset — 12 viewports. Same matrix the
@@ -62,13 +62,13 @@ const SHIP_READY_PRESET_IDS = [
   'sr-narrow-320',     // 320  Narrow smoke / WCAG reflow
   'iphone-16',         // 393  iPhone 13–17 standard
   'iphone-17-pro-max', // 440  iPhone 17 Pro Max / widest phone
-  'sr-sm-640',         // 640  sm flip
-  'sr-md-768',         // 768  md flip / iPad Mini
+  'sr-md-600',         // 600  '600' tier exactly (first flip; 440 covers below)
+  'ipad-mini-7',       // 744  current iPad mini, sits UNDER the 768 tier
+  'sr-md-768',         // 768  '768' tier exactly / iPad 9th gen
   'ipad-air-m3',       // 820  iPad / Air / Pro 11" current
-  'sr-lg-1024',        // 1024 lg flip / iPad Pro 11" portrait
-  'macbook-air-13',    // 1280 xl flip / MacBook Air 13"
+  'sr-lg-1024',        // 1024 '1024' tier / iPad Air 13" portrait
+  'macbook-air-13',    // 1280 '1280' tier / MacBook Air 13"
   'macbook-pro-14',    // 1512 MacBook Pro 14"
-  'sr-2xl-1536',       // 1536 2xl flip
   'full-hd',           // 1920 Full HD
   'qhd-1440p',         // 2560 QHD / retina
 ];
